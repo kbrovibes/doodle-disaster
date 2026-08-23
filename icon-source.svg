@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="115" fill="#ffd93d"/>
+  <path d="M256 78c118-8 194 60 190 146-3 61-47 73-84 69-30-3.4-59 10-53 47 6 37-12 94-73 100-85 8-163-58-159-176C81 166 158 85 256 78Z"
+        fill="#fdf8ef" stroke="#26232e" stroke-width="21" stroke-linejoin="round"/>
+  <!-- paint dabs -->
+  <circle cx="176" cy="172" r="25" fill="#e23e3e"/>
+  <circle cx="252" cy="146" r="25" fill="#2b6fe3"/>
+  <circle cx="330" cy="170" r="22" fill="#1e7d32"/>
+  <circle cx="384" cy="238" r="17" fill="#8e44ad"/>
+  <!-- googly eyes -->
+  <circle cx="205" cy="258" r="46" fill="#ffffff" stroke="#26232e" stroke-width="13"/>
+  <circle cx="298" cy="248" r="46" fill="#ffffff" stroke="#26232e" stroke-width="13"/>
+  <circle cx="213" cy="274" r="21" fill="#26232e"/>
+  <circle cx="306" cy="264" r="21" fill="#26232e"/>
+  <!-- blush -->
+  <circle cx="148" cy="316" r="19" fill="#e86868" opacity="0.45"/>
+  <circle cx="360" cy="308" r="19" fill="#e86868" opacity="0.45"/>
+  <!-- open grin with tongue -->
+  <path d="M196 324 Q253 396 314 322 Z" fill="#26232e" stroke="#26232e" stroke-width="12" stroke-linejoin="round"/>
+  <path d="M232 352 q24 30 50 4 q-6 26 -28 26 q-20 0 -22 -30 Z" fill="#e86868"/>
+</svg>

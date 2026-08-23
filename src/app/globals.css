@@ -1,26 +1,180 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --paper: #fdf8ef;
+  --ink: #26232e;
+  --coral: #ff6b6b;
+  --sun: #ffd93d;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-paper: var(--paper);
+  --color-ink: var(--ink);
+  --color-coral: var(--coral);
+  --color-sun: var(--sun);
+  --font-sans: var(--font-body);
+  --font-display: var(--font-display);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--paper);
+  background-image: radial-gradient(rgba(38, 35, 46, 0.05) 1px, transparent 1px);
+  background-size: 22px 22px;
+  color: var(--ink);
+  font-family: var(--font-body), system-ui, sans-serif;
+}
+
+.font-display {
+  font-family: var(--font-display), var(--font-body), system-ui, sans-serif;
+}
+
+.shadow-doodle {
+  box-shadow: 3px 3px 0 rgba(38, 35, 46, 0.85);
+}
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  border: 2px solid var(--ink);
+  background: var(--coral);
+  color: white;
+  font-weight: 800;
+  font-family: var(--font-display), system-ui, sans-serif;
+  border-radius: 0.9rem;
+  padding: 0.7rem 1.4rem;
+  box-shadow: 3px 3px 0 rgba(38, 35, 46, 0.85);
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+  cursor: pointer;
+}
+.btn-primary svg {
+  vertical-align: middle !important;
+  flex-shrink: 0;
+}
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 4px 5px 0 rgba(38, 35, 46, 0.85);
+}
+.btn-primary:active:not(:disabled) {
+  transform: translateY(1px) scale(0.98);
+  box-shadow: 1px 1px 0 rgba(38, 35, 46, 0.85);
+}
+
+@keyframes floatUp {
+  0% {
+    transform: translateY(0) scale(0.6);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+    transform: translateY(-20px) scale(1.1);
+  }
+  100% {
+    transform: translateY(-180px) scale(1) rotate(12deg);
+    opacity: 0;
+  }
+}
+.animate-float {
+  animation: floatUp 2s ease-out forwards;
+}
+
+/* the O's of DOODLE are eyes: pupils glance around, lids blink */
+.wm-pupil {
+  animation: pupilLook 6s ease-in-out infinite;
+}
+@keyframes pupilLook {
+  0%, 24% { transform: translate(0, 0); }
+  30%, 44% { transform: translate(-2.6px, 0.6px); }
+  50%, 64% { transform: translate(2.6px, -0.4px); }
+  70%, 100% { transform: translate(0, 0); }
+}
+.wm-eye {
+  animation: eyeBlink 6s ease-in-out infinite;
+  transform-origin: 50% 55%;
+}
+@keyframes eyeBlink {
+  0%, 46%, 54%, 100% { transform: scaleY(1); }
+  49%, 51% { transform: scaleY(0.08); }
+}
+.wordmark:hover .wm-pupil {
+  animation-duration: 1.2s;
+}
+
+/*
+ * A flex row centers the icon's BOX, but a line of text reads optically lower
+ * than its box (ascender space up top). Drop icons that sit beside text so
+ * they land on the text's optical center. Icon-only buttons are left alone.
+ */
+.btn-primary svg,
+.with-glyph svg {
+  position: relative;
+  top: 0.17em;
+}
+
+/* no long-press magnifier / selection handles anywhere in the game */
+.dd-nosel,
+.dd-nosel * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.dd-game {
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* players who already guessed bounce while the rest sweat */
+@keyframes guessedHop {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  25% { transform: translateY(-4px) rotate(-9deg); }
+  50% { transform: translateY(0) rotate(0deg); }
+  75% { transform: translateY(-2px) rotate(7deg); }
+}
+.dd-hop {
+  animation: guessedHop 1.1s ease-in-out infinite;
+  transform-origin: 50% 80%;
+}
+
+/* guess clouds */
+@keyframes cloudIn {
+  0% { transform: translateY(10px) scale(0.7); opacity: 0; }
+  60% { transform: translateY(-2px) scale(1.06); opacity: 1; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+@keyframes cloudOut {
+  0% { transform: translateY(0); opacity: 1; }
+  100% { transform: translateY(-26px); opacity: 0; }
+}
+.dd-cloud {
+  animation: cloudIn 0.28s cubic-bezier(0.34, 1.56, 0.64, 1),
+    cloudOut 0.9s ease-in 3.3s forwards;
+}
+
+@keyframes caretBlink {
+  0%, 45% { opacity: 1; }
+  55%, 100% { opacity: 0; }
+}
+.dd-caret {
+  animation: caretBlink 1s step-end infinite;
+}
+
+@keyframes popIn {
+  0% { transform: scale(0); }
+  70% { transform: scale(1.5); }
+  100% { transform: scale(1); }
+}
+.pop-in {
+  animation: popIn 0.35s ease;
+}
+
+@keyframes wiggle {
+  0%, 100% { transform: rotate(-2deg); }
+  50% { transform: rotate(2deg); }
+}
+.animate-wiggle {
+  animation: wiggle 2.4s ease-in-out infinite;
 }

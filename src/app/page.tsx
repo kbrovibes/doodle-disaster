@@ -1,69 +1,136 @@
-import Image from "next/image";
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  api,
+  getSavedAvatar,
+  getSavedName,
+  saveAvatar,
+  saveName,
+  savePlayerId,
+} from "@/lib/client";
+import { ClientState } from "@/lib/types";
+import { IconLogo, IconRocket, Wordmark } from "@/components/icons";
+import AvatarPicker from "@/components/AvatarPicker";
+import InstallTip from "@/components/InstallTip";
 
 export default function Home() {
+  const router = useRouter();
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [joinCode, setJoinCode] = useState("");
+  const [avatar, setAvatar] = useState("a0");
+
+  useEffect(() => {
+    setName(getSavedName());
+    setAvatar(getSavedAvatar());
+  }, []);
+
+  async function create(e: React.FormEvent) {
+    e.preventDefault();
+    const n = name.trim();
+    if (!n || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const res = await api<{ roomId: string; playerId: string; state: ClientState }>(
+        "",
+        { name: n, avatar }
+      );
+      saveName(n);
+      saveAvatar(avatar);
+      savePlayerId(res.roomId, res.playerId);
+      router.push(`/r/${res.roomId}`);
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  }
+
+  function joinExisting(e: React.FormEvent) {
+    e.preventDefault();
+    const raw = joinCode.trim();
+    if (!raw) return;
+    // accept a pasted URL or a bare room id
+    const m = raw.match(/\/r\/([a-z0-9-]+)/i);
+    const id = (m ? m[1] : raw).toLowerCase().replace(/[^a-z0-9-]/g, "");
+    if (id) router.push(`/r/${id}`);
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <main className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center px-4 py-10">
+      <div className="text-center">
+        <div className="animate-wiggle inline-block"><IconLogo size={84} /></div>
+        <h1 className="mt-2 text-5xl leading-tight">
+          <Wordmark />
+        </h1>
+        <p className="mt-2 text-lg text-ink/60">
+          Draw badly. Guess wildly. Blame the pen.
+        </p>
+      </div>
+
+      <form
+        onSubmit={create}
+        className="mt-8 rounded-2xl border-2 border-ink bg-white p-6 shadow-doodle"
+      >
+        <div className="mb-3 flex justify-center">
+          <AvatarPicker
+            value={avatar}
+            onChange={(t) => {
+              setAvatar(t);
+              saveAvatar(t);
+            }}
+          />
+        </div>
+        <label className="text-sm font-bold text-ink/70">Your name</label>
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Sir Scribbles"
+          maxLength={20}
+          className="mt-1 w-full rounded-xl border-2 border-ink/20 bg-paper px-4 py-3 text-lg font-bold outline-none focus:border-ink"
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+        <button
+          disabled={!name.trim() || busy}
+          className="btn-primary mt-4 w-full text-lg disabled:opacity-40"
+        >
+          {busy ? (
+            "Inventing a room…"
+          ) : (
+            <>Create a game <IconRocket size={20} /></>
+          )}
+        </button>
+        {error && <p className="mt-2 text-sm text-coral">{error}</p>}
+        <p className="mt-3 text-center text-xs text-ink/50">
+          You&apos;ll get a goofy link like{" "}
+          <span className="font-mono">/r/soggy-walrus-fiesta</span> to send your
+          friends.
+        </p>
+      </form>
+
+      <form onSubmit={joinExisting} className="mt-4 flex gap-2">
+        <input
+          value={joinCode}
+          onChange={(e) => setJoinCode(e.target.value)}
+          placeholder="…or paste an invite link"
+          className="min-w-0 flex-1 rounded-xl border-2 border-ink/20 bg-white px-4 py-2.5 outline-none focus:border-ink"
+        />
+        <button
+          disabled={!joinCode.trim()}
+          className="rounded-xl border-2 border-ink bg-sun px-4 font-bold shadow-doodle transition-transform active:scale-95 disabled:opacity-40"
+        >
+          Join
+        </button>
+      </form>
+
+      <InstallTip />
+
+      <p className="mt-8 text-center text-xs text-ink/40">
+        No accounts · no ads · no artistic talent required
+      </p>
+    </main>
   );
 }
