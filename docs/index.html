@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+
+<title>Doodle Disaster — multiplayer draw and guess game</title>
+<meta name="description" content="A browser party game for friends: make a room, share the goofy link, take turns drawing while everyone else guesses. No accounts, no ads, bots included.">
+<meta name="author" content="Karthik Rajan">
+<meta name="color-scheme" content="light">
+
+<link rel="canonical" href="https://kbrovibes.github.io/doodle-disaster/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://kbrovibes.github.io/doodle-disaster/">
+<meta property="og:title" content="Doodle Disaster — multiplayer draw and guess game">
+<meta property="og:description" content="Make a room, share the goofy link, take turns drawing while everyone else guesses. No accounts, no ads, bots included.">
+<meta property="og:image" content="https://kbrovibes.github.io/doodle-disaster/media/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23ffd93d'/%3E%3Ccircle cx='36' cy='46' r='16' fill='%23fdf8ef' stroke='%2326232e' stroke-width='5'/%3E%3Ccircle cx='68' cy='44' r='16' fill='%23fdf8ef' stroke='%2326232e' stroke-width='5'/%3E%3Ccircle cx='39' cy='51' r='7' fill='%2326232e'/%3E%3Ccircle cx='71' cy='49' r='7' fill='%2326232e'/%3E%3Cpath d='M32 71 Q50 89 70 69' fill='none' stroke='%2326232e' stroke-width='7' stroke-linecap='round'/%3E%3C/svg%3E">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&amp;family=Nunito:wght@400;600;700&amp;display=swap" rel="stylesheet">
+
+<style>
+/* ==========================================================================
+   THEME TOKENS — derived from src/app/globals.css, layout.tsx and
+   icon-source.svg. --coral (#ff6b6b) and --sun (#ffd93d) are fill-only in the
+   app; --accent is the same hue darkened until white text passes 4.5:1.
+   ========================================================================== */
+:root{
+  --bg:            #fdf8ef;   /* --paper */
+  --surface:       #ffffff;   /* the app's cards are white on paper */
+  --surface-2:     #fdf2cf;   /* the sun wash used behind room names */
+  --ink:           #26232e;   /* --ink */
+  --muted:         #676368;   /* --ink at 70% over paper */
+  --accent:        #cf3a3a;   /* --coral #ff6b6b, darkened to pass on paper */
+  --accent-ink:    #ffffff;
+  --accent-2:      #1e7d32;   /* the green the app uses for a correct guess */
+  --accent-3:      #ffd93d;   /* --sun, fill only, used in two places */
+  --hairline:      #cfc9be;
+  --radius:        16px;      /* rounded-2xl */
+  --shadow:        3px 3px 0 rgba(38,35,46,.85);  /* .shadow-doodle */
+  --font-display:  "Fredoka", "Nunito", system-ui, sans-serif;
+  --font-body:     "Nunito", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono:     ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", monospace;
+  color-scheme:    light;
+}
+/* ==================== end theme tokens =================================== */
+
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);
+  background-image:radial-gradient(rgba(38,35,46,.05) 1px, transparent 1px);
+  background-size:22px 22px;
+  color:var(--ink);font-family:var(--font-body);
+  font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+img,svg{display:block;max-width:100%}
+a{color:inherit}
+h1,h2,h3{margin:0;line-height:1.1;letter-spacing:-.01em;font-weight:600;font-family:var(--font-display)}
+p{margin:0}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
+::selection{background:var(--accent);color:var(--accent-ink)}
+
+.wrap{max-width:1140px;margin:0 auto;padding:0 24px}
+.eyebrow{font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--accent-2);font-family:var(--font-body)}
+.lede{color:var(--muted);font-size:17px;max-width:62ch}
+.band{background:var(--surface-2)}
+section{scroll-margin-top:80px}
+
+.skip{position:absolute;left:-9999px;top:0;background:var(--accent);color:var(--accent-ink);
+  padding:12px 18px;z-index:99;border-radius:0 0 10px 0;font-weight:700}
+.skip:focus{left:0}
+
+/* ---------- buttons / the three link affordances ---------- */
+.btn{display:inline-flex;align-items:center;gap:8px;padding:10px 18px;border-radius:14px;
+  font-size:14px;font-weight:700;font-family:var(--font-display);text-decoration:none;
+  border:2px solid transparent;transition:background .16s,color .16s,border-color .16s,transform .1s,box-shadow .1s;white-space:nowrap}
+.btn:hover{transform:translateY(-2px)}
+.btn-primary{background:var(--accent);color:var(--accent-ink);border-color:var(--ink);box-shadow:var(--shadow)}
+.btn-primary:hover{background:var(--ink);color:var(--bg)}
+.btn-ghost{background:var(--surface);color:var(--ink);border-color:var(--ink);box-shadow:var(--shadow)}
+.btn-ghost:hover{background:var(--accent-3)}
+.btn-quiet{color:var(--muted);padding:10px 10px;border-color:transparent}
+.btn-quiet:hover{color:var(--ink)}
+.btn svg{width:15px;height:15px;flex:none;fill:currentColor}
+
+/* ---------- header ---------- */
+.site{position:sticky;top:0;z-index:40;background:color-mix(in srgb,var(--bg) 90%,transparent);
+  backdrop-filter:saturate(1.6) blur(12px);border-bottom:2px solid var(--hairline)}
+.site .wrap{display:flex;align-items:center;gap:20px;height:62px}
+.wordmark{font-family:var(--font-display);font-size:20px;font-weight:700;text-decoration:none;
+  display:flex;align-items:baseline;gap:.4em;white-space:nowrap;flex:none}
+.wordmark b{font-weight:700}
+.wordmark em{font-style:normal;color:var(--accent)}
+.wordmark span{font-size:13px;font-weight:400;font-family:var(--font-body);color:var(--muted);letter-spacing:.02em}
+.site nav{display:flex;gap:22px;margin-left:auto;font-size:14px}
+.site nav a{color:var(--muted);text-decoration:none;padding:4px 0;border-bottom:2px solid transparent;font-weight:600}
+.site nav a:hover{color:var(--ink)}
+.site nav a[aria-current="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+.site .links{display:flex;align-items:center;gap:6px;margin-left:auto}
+.site nav + .links{margin-left:16px}
+@media (max-width:900px){.site nav{display:none}.site .links .label-long{display:none}.wordmark span{display:none}}
+.site .links .sm{display:none}
+@media (max-width:560px){
+  .site .wrap{gap:6px;padding:0 12px}
+  .btn{padding:9px 10px;font-size:12.5px}
+  .wordmark{font-size:16px}
+  .btn-quiet{padding:9px 2px}
+  .site .links .lg{display:none}
+  .site .links .sm{display:inline}
+}
+
+/* ---------- hero ---------- */
+.hero{padding:52px 0 24px}
+.hero h1{font-size:clamp(32px,5.4vw,54px);max-width:16ch}
+.hero h1 em{font-style:normal;color:var(--accent)}
+.hero .lede{margin-top:16px;font-size:clamp(16px,2.2vw,19px)}
+.hero .cta{display:flex;flex-wrap:wrap;gap:10px;margin-top:24px}
+.facts{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px;padding:0;list-style:none}
+.facts li{font-size:12.5px;font-weight:700;color:var(--ink);border:2px solid var(--hairline);background:var(--surface);
+  border-radius:999px;padding:5px 13px}
+.facts li:first-child{background:var(--accent-3);border-color:var(--ink)}
+.hero-shot{margin-top:34px}
+
+/* ---------- screenshot frames ---------- */
+.frame{background:var(--surface);border:2px solid var(--ink);border-radius:var(--radius);
+  box-shadow:var(--shadow);overflow:hidden}
+.frame .chrome{display:flex;align-items:center;gap:6px;padding:9px 12px;border-bottom:2px solid var(--ink);
+  background:var(--surface-2)}
+.frame .chrome i{width:9px;height:9px;border-radius:50%;background:var(--ink);opacity:.35;flex:none}
+.frame .chrome .url{margin-left:8px;font-family:var(--font-mono);font-size:11px;color:var(--muted);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.frame .media{aspect-ratio:16/10;background:var(--surface-2)}
+.frame .media > *{width:100%;height:100%;object-fit:cover;object-position:top center}
+.frame.phone{max-width:300px;border-radius:30px;padding:8px;margin-inline:auto}
+.frame.phone .media{aspect-ratio:9/19.5;border-radius:22px;overflow:hidden}
+.frame.phone .media > *{object-position:top center}
+
+/* ---------- generic section head ---------- */
+.head{max-width:70ch}
+.head h2{font-size:clamp(26px,3.6vw,38px);margin-top:10px}
+.head p{margin-top:14px;color:var(--muted);font-size:17px}
+.pad{padding:76px 0}
+.pad-sm{padding:56px 0}
+
+/* ---------- "what it is" ---------- */
+.what{display:grid;grid-template-columns:1.15fr .85fr;gap:56px;align-items:start}
+.what p + p{margin-top:14px}
+.what .prose{font-size:17.5px}
+.what .prose strong{font-weight:700}
+.what .prose code{font-family:var(--font-mono);font-size:.92em;background:var(--surface-2);
+  border:1px solid var(--hairline);border-radius:6px;padding:1px 5px}
+.forwho{background:var(--surface);border:2px solid var(--ink);border-radius:var(--radius);padding:22px 24px;box-shadow:var(--shadow)}
+.forwho h3{font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700;font-family:var(--font-body)}
+.forwho ul{margin:14px 0 0;padding-left:0;list-style:none;display:grid;gap:12px}
+.forwho li{display:flex;gap:10px;font-size:15px;color:var(--muted)}
+.forwho li b{color:var(--ink);font-weight:700}
+.forwho li::before{content:"";flex:none;width:8px;height:8px;margin-top:9px;border-radius:50%;background:var(--accent)}
+@media (max-width:860px){.what{grid-template-columns:1fr;gap:32px}}
+
+/* ---------- carousel ---------- */
+.tour{padding:76px 0 64px;border-top:2px solid var(--hairline);border-bottom:2px solid var(--hairline)}
+.tour .bar{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.track{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;
+  margin-top:34px;gap:0;overscroll-behavior-x:contain}
+.track::-webkit-scrollbar{display:none}
+.slide{flex:0 0 100%;scroll-snap-align:center;scroll-snap-stop:always;
+  display:grid;grid-template-columns:1.25fr 1fr;gap:52px;align-items:center;padding:0 24px}
+.slide .copy h3{font-size:clamp(24px,3.4vw,36px);margin-top:8px}
+.slide .copy h3 em{font-style:normal;color:var(--accent)}
+.slide .copy p{margin-top:14px;color:var(--muted);font-size:16.5px;max-width:44ch}
+.slide .copy ul{margin:18px 0 0;padding-left:0;list-style:none;display:grid;gap:8px;font-size:14.5px;color:var(--muted)}
+.slide .copy li::before{content:"— ";color:var(--accent)}
+.controls{display:flex;align-items:center;gap:14px;margin-top:30px;justify-content:center}
+.dots{display:flex;gap:8px}
+.dot{width:9px;height:9px;padding:0;border:0;border-radius:999px;background:color-mix(in srgb,var(--ink) 25%,transparent);
+  cursor:pointer;transition:width .2s,background .2s}
+.dot[aria-current="true"]{width:28px;background:var(--accent)}
+.arrow,.pause{width:36px;height:36px;display:grid;place-items:center;border-radius:12px;cursor:pointer;
+  border:2px solid var(--ink);background:var(--surface);color:var(--ink)}
+.arrow:hover,.pause:hover{background:var(--accent-3)}
+.arrow svg,.pause svg{width:14px;height:14px;fill:currentColor}
+.sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+@media (max-width:900px){
+  .slide{grid-template-columns:1fr;gap:26px;padding:0 20px}
+  .slide .shot{order:-1}
+  .slide .copy p{max-width:none}
+}
+
+/* ---------- steps ---------- */
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:2px;margin-top:38px;
+  background:var(--ink);border:2px solid var(--ink);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
+.step{background:var(--bg);padding:26px 24px}
+.step .n{font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--accent-2);letter-spacing:.08em}
+.step h3{font-size:18px;margin-top:12px}
+.step p{margin-top:8px;font-size:14.5px;color:var(--muted)}
+
+/* ---------- feature grid ---------- */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:18px;margin-top:38px}
+.card{background:var(--surface);border:2px solid var(--ink);border-radius:var(--radius);padding:22px;box-shadow:var(--shadow)}
+.card h3{font-size:17px;display:flex;align-items:center;gap:9px}
+.card h3 svg{width:18px;height:18px;fill:none;stroke:var(--accent);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.card p{margin-top:9px;font-size:14.5px;color:var(--muted)}
+
+/* ---------- stack ---------- */
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:26px;padding:0;list-style:none}
+.chips li{font-family:var(--font-mono);font-size:12.5px;background:var(--surface);border:2px solid var(--hairline);
+  border-radius:999px;padding:5px 13px;color:var(--muted)}
+.note{margin-top:22px;font-size:15px;color:var(--muted);max-width:64ch}
+
+/* ---------- faq ---------- */
+.faq{margin-top:34px;border-top:2px solid var(--hairline);max-width:78ch}
+.faq details{border-bottom:2px solid var(--hairline)}
+.faq summary{cursor:pointer;list-style:none;padding:18px 2px;font-weight:700;font-size:16.5px;font-family:var(--font-display);
+  display:flex;justify-content:space-between;gap:16px;align-items:center}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:"+";color:var(--accent);font-weight:400;font-size:22px;line-height:1}
+.faq details[open] summary::after{content:"–"}
+.faq p{padding:0 2px 20px;color:var(--muted);font-size:15.5px;max-width:66ch}
+
+/* ---------- footer ---------- */
+footer{border-top:2px solid var(--hairline);background:var(--surface-2);padding:52px 0 40px;margin-top:0}
+.foot{display:flex;flex-wrap:wrap;gap:26px;justify-content:space-between;align-items:flex-start}
+.foot .links{display:flex;flex-wrap:wrap;gap:8px}
+.foot small{display:block;color:var(--muted);font-size:13px;line-height:1.7}
+.foot a.plain{color:var(--muted)}
+.foot a.plain:hover{color:var(--ink)}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
+  .btn:hover{transform:none}
+}
+@media (min-width:1px){html{scroll-behavior:smooth}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<!-- ══ HEADER ══════════════════════════════════════════════════════ -->
+<header class="site">
+  <div class="wrap">
+    <a class="wordmark" href="#top"><b>Doodle <em>Disaster</em></b><span>draw and guess</span></a>
+
+    <nav aria-label="Page sections">
+      <a href="#what">What it is</a>
+      <a href="#tour">Tour</a>
+      <a href="#how">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+
+    <div class="links">
+      <a class="btn btn-primary" href="https://doodle-disaster.vercel.app" rel="noopener" aria-label="Open the app"><span class="lg">Open the app</span><span class="sm" aria-hidden="true">Play</span></a>
+      <a class="btn btn-ghost" href="https://github.com/kbrovibes/doodle-disaster" rel="noopener" aria-label="View source on GitHub">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.93-.89-1.18-.89-1.18-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        <span class="label-long">View source</span>
+      </a>
+      <a class="btn btn-quiet" href="https://kbrovibes.github.io/" aria-label="Back to all projects"><span class="lg">All projects</span><span class="sm" aria-hidden="true">Projects</span></a>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- ══ 1. HERO ══════════════════════════════════════════════════════ -->
+<section id="top" class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Draw-and-guess party game</p>
+    <h1>Pictionary for people who <em>can’t</em> draw.</h1>
+    <p class="lede">For friends on a video call who wanted a game night without an install, an account, or four more people than actually turned up. Make a room, send the link, start scribbling.</p>
+
+    <div class="cta">
+      <a class="btn btn-primary" href="https://doodle-disaster.vercel.app" rel="noopener">Open the app</a>
+      <a class="btn btn-ghost" href="https://github.com/kbrovibes/doodle-disaster" rel="noopener">View source on GitHub</a>
+      <a class="btn btn-quiet" href="https://kbrovibes.github.io/">← Back to all projects</a>
+    </div>
+
+    <ul class="facts">
+      <li>No accounts, no ads</li>
+      <li>Up to 10 players a room</li>
+      <li>3 bots that draw and guess</li>
+      <li>Next.js + Supabase</li>
+    </ul>
+
+    <div class="hero-shot frame">
+      <div class="chrome" aria-hidden="true"><i></i><i></i><i></i><span class="url">doodle-disaster.vercel.app/r/zesty-cabbage-karaoke</span></div>
+      <div class="media">
+        <img src="media/hero.jpg" fetchpriority="high" alt="A bot's pink pig drawing fills the shared canvas while player scores update">
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ 2. WHAT IT IS ═══════════════════════════════════════════════ -->
+<section id="what" class="pad">
+  <div class="wrap what">
+    <div>
+      <p class="eyebrow">What it is</p>
+      <h2 style="font-size:clamp(26px,3.6vw,38px);margin-top:10px">A room, a canvas, and a lot of bad guesses</h2>
+      <div class="prose" style="margin-top:18px">
+        <p>Game night on a call always stalls in the same place. Someone suggests Pictionary, then spends ten minutes on a site that wants an account, an app install, or six players when four turned up. By the time it works, two people have wandered off.</p>
+        <p>This is one page. Type a name, hit <strong>Create a game</strong>, and you get a room like <code>/r/soggy-walrus-fiesta</code> to paste in the chat. Anyone who clicks it is in. Short of players, the host drops in up to three bots that take real drawing and guessing turns.</p>
+      </div>
+    </div>
+    <aside class="forwho">
+      <h3>Who it’s for</h3>
+      <ul>
+        <li><span><b>Friends on a call.</b> Two players and a bot is a game; ten is the room limit.</span></li>
+        <li><span><b>Families with kids.</b> Easy difficulty deals only simple, drawable words, and the themed word lists refuse anything rude.</span></li>
+        <li><span><b>Not for competitive types.</b> No accounts, no ladders, no match history. When the tab closes, the game is over.</span></li>
+      </ul>
+    </aside>
+  </div>
+</section>
+
+<!-- ══ 3. TOUR ═════════════════════════════════════════════════════ -->
+<section id="tour" class="tour band"
+         aria-roledescription="carousel" aria-label="Product tour">
+  <div class="wrap bar">
+    <div class="head">
+      <p class="eyebrow">Tour</p>
+      <h2>One round, start to finish</h2>
+    </div>
+    <div class="controls" style="margin-top:0">
+      <button class="arrow" data-prev type="button" aria-controls="track" aria-label="Previous slide">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 2 4.5 8l6 6 1.4-1.4L7.3 8l4.6-4.6z"/></svg></button>
+      <button class="arrow" data-next type="button" aria-controls="track" aria-label="Next slide">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 2 4.1 3.4 8.7 8l-4.6 4.6L5.5 14l6-6z"/></svg></button>
+      <button class="pause" data-toggle type="button" aria-label="Pause automatic slide rotation" aria-pressed="false">
+        <svg viewBox="0 0 16 16" aria-hidden="true" data-icon><rect x="4" y="3" width="3" height="10" rx="1"/><rect x="9" y="3" width="3" height="10" rx="1"/></svg></button>
+    </div>
+  </div>
+
+  <div class="track" id="track" tabindex="0" role="group" aria-label="Slides, use arrow keys">
+
+    <article class="slide" role="group" aria-roledescription="slide" aria-label="1 of 5: Getting in">
+      <div class="shot frame">
+        <div class="chrome" aria-hidden="true"><i></i><i></i><i></i><span class="url">doodle-disaster.vercel.app</span></div>
+        <div class="media">
+          <img src="media/tour-01-create-a-game.jpg" loading="lazy" decoding="async" alt="Home screen with the avatar grid open and a display name typed in">
+        </div>
+      </div>
+      <div class="copy">
+        <p class="eyebrow">Getting in</p>
+        <h3>Pick a face, type a <em>name</em></h3>
+        <p>The whole sign-up is a display name and one of twenty hand-drawn faces. Create the game and the room gets a nonsense three-word address that anyone with the link can open.</p>
+        <ul>
+          <li>20 hand-drawn avatars, no uploads</li>
+          <li>No email, no password, no verification</li>
+          <li>Name and avatar remembered in your browser</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="slide" role="group" aria-roledescription="slide" aria-label="2 of 5: The lobby">
+      <div class="shot frame">
+        <div class="chrome" aria-hidden="true"><i></i><i></i><i></i><span class="url">doodle-disaster.vercel.app/r/zesty-cabbage-karaoke</span></div>
+        <div class="media">
+          <img src="media/tour-02-lobby-and-bots.jpg" loading="lazy" decoding="async" alt="Lobby showing three bot players plus difficulty, round count and timer settings">
+        </div>
+      </div>
+      <div class="copy">
+        <p class="eyebrow">The lobby</p>
+        <h3>Set the rules, add <em>bots</em></h3>
+        <p>The host picks a difficulty, five to fifteen rounds, and a 45, 60 or 75 second timer. Short a few players? Add Botrick, Doodl-E and Crayon.exe, who take drawing turns like anyone else.</p>
+        <ul>
+          <li>Easy, Medium and Hard word pools</li>
+          <li>Optional theme: “cricket”, “90s cartoons”</li>
+          <li>Two players minimum, one of them human</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="slide" role="group" aria-roledescription="slide" aria-label="3 of 5: Your turn">
+      <div class="shot frame">
+        <div class="chrome" aria-hidden="true"><i></i><i></i><i></i><span class="url">doodle-disaster.vercel.app/r/zesty-cabbage-karaoke</span></div>
+        <div class="media">
+          <img src="media/tour-03-pick-a-word.jpg" loading="lazy" decoding="async" alt="Word picker offering fork, street lamp and snore, each tagged with a difficulty">
+        </div>
+      </div>
+      <div class="copy">
+        <p class="eyebrow">Your turn</p>
+        <h3>Three words, fifteen <em>seconds</em></h3>
+        <p>The drawer gets three choices tagged easy, normal or chaos, and fifteen seconds to commit. Dither and the turn is forfeited — auto-picking only produced rounds where nobody drew anything.</p>
+        <ul>
+          <li>499 curated words, dealt like a deck</li>
+          <li>Chaos tier: “deja vu”, “brain freeze”</li>
+          <li>The host can skip a stuck drawer</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="slide" role="group" aria-roledescription="slide" aria-label="4 of 5: Drawing and guessing">
+      <div class="shot frame">
+        <div class="chrome" aria-hidden="true"><i></i><i></i><i></i><span class="url">doodle-disaster.vercel.app/r/zesty-cabbage-karaoke</span></div>
+        <div class="media">
+          <img src="media/tour-04-draw-and-guess.jpg" loading="lazy" decoding="async" alt="Half-drawn flag on the shared canvas beside a guess bubble and the hint button">
+        </div>
+      </div>
+      <div class="copy">
+        <p class="eyebrow">The scribbling</p>
+        <h3>Draw while everyone <em>shouts</em></h3>
+        <p>Pen, eraser, fill, undo, clear and fourteen colours, streaming stroke by stroke to the room. Guessers type; a near miss comes back as “sooo close”, and letters of the word unlock as the clock drains.</p>
+        <ul>
+          <li>Points for guessing early, not typing fast</li>
+          <li>A hint token reveals one letter, only to you</li>
+          <li>Players who got it keep chatting in private</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="slide" role="group" aria-roledescription="slide" aria-label="5 of 5: On a phone">
+      <div class="shot">
+        <div class="frame phone">
+          <div class="media">
+            <img src="media/tour-05-phone.jpg" loading="lazy" decoding="async" alt="Phone-width home screen with the palette logo, name field and create button">
+          </div>
+        </div>
+      </div>
+      <div class="copy">
+        <p class="eyebrow">On a phone</p>
+        <h3>Built for the <em>couch</em>, too</h3>
+        <p>The layout reshuffles for touch, and the game ships its own on-screen keyboard so the system one never shoves the drawing off the screen mid-guess. Add it to the home screen and it runs full screen.</p>
+        <ul>
+          <li>Installable: web manifest and service worker</li>
+          <li>Separate portrait and landscape layouts</li>
+          <li>No offline mode — the game is live</li>
+        </ul>
+      </div>
+    </article>
+
+  </div>
+
+  <div class="controls">
+    <div class="dots" aria-label="Choose a slide">
+      <button class="dot" type="button" aria-current="true"  aria-label="Slide 1"></button>
+      <button class="dot" type="button" aria-current="false" aria-label="Slide 2"></button>
+      <button class="dot" type="button" aria-current="false" aria-label="Slide 3"></button>
+      <button class="dot" type="button" aria-current="false" aria-label="Slide 4"></button>
+      <button class="dot" type="button" aria-current="false" aria-label="Slide 5"></button>
+    </div>
+  </div>
+  <p class="sr" aria-live="polite" data-live></p>
+</section>
+
+<!-- ══ 4. HOW IT WORKS ═════════════════════════════════════════════ -->
+<section id="how" class="pad">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow">How it works</p>
+      <h2>From an idle group chat to a running game</h2>
+      <p>Four things happen, in this order, and none of them involve a password.</p>
+    </div>
+    <div class="steps">
+      <div class="step"><p class="n">01</p><h3>Make a room</h3><p>Type a name, pick an avatar, hit create. You land in a lobby holding a link like /r/zesty-cabbage-karaoke.</p></div>
+      <div class="step"><p class="n">02</p><h3>Send the link</h3><p>Everyone who opens it types a name and they’re in. Two players is enough, and the host can add bots for the rest.</p></div>
+      <div class="step"><p class="n">03</p><h3>Draw and guess</h3><p>Each turn, one player picks a word and draws it while everyone else types guesses. Getting there first is worth the most.</p></div>
+      <div class="step"><p class="n">04</p><h3>Survey the damage</h3><p>After the last round the scores come up with medals and confetti, next to a gallery of every drawing the room produced.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ 5. FEATURES ═════════════════════════════════════════════════ -->
+<section id="features" class="pad band">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow">Features</p>
+      <h2>What’s actually in it</h2>
+    </div>
+    <div class="grid">
+      <div class="card"><h3><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18c3-9 6-9 8-4s5 5 8-2"/></svg>Live canvas</h3><p>Strokes stream to everyone as you draw, over a Supabase Realtime channel. Late joiners get the board resent.</p></div>
+      <div class="card"><h3><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12h.01M15 12h.01"/></svg>Bots that draw</h3><p>Three bots with 101 hand-authored doodles, run through a pass that adds tremor, overshoot and the odd undone stroke.</p></div>
+      <div class="card"><h3><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M9.5 9.5a2.5 2.5 0 1 1 2.5 3v1.5M12 17h.01"/></svg>Bots that guess</h3><p>The board is snapshotted and shown to Claude Haiku 4.5, which guesses against the same letter mask you see.</p></div>
+      <div class="card"><h3><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h13"/></svg>Themed word lists</h3><p>Ask for “90s cartoons” and the room gets its own easy, normal and chaos words. Rude themes get refused.</p></div>
+      <div class="card"><h3><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a6 6 0 0 0-3 11v3h6v-3a6 6 0 0 0-3-11zM10 21h4"/></svg>Hints you spend</h3><p>Letters unlock on a timer for the whole room; a personal hint token reveals an extra letter only you can see.</p></div>
+      <div class="card"><h3><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l4 4 10-10"/></svg>Near-miss detection</h3><p>A guess within an edit or two of the word comes back as “sooo close” — shown to you, not to the room.</p></div>
+      <div class="card"><h3><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7" width="20" height="11" rx="2"/><path d="M6 11h.01M10 11h.01M14 11h.01M18 11h.01M8 15h8"/></svg>Touch keyboard</h3><p>Phones get an in-app QWERTY, so the system keyboard never covers the drawing while you are guessing.</p></div>
+      <div class="card"><h3><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7l6 5-6 5zM14 7h5v10h-5z"/></svg>Host controls</h3><p>Skip a stuck drawer, remove a player, add or drop bots, and set rounds, timer and difficulty from the lobby.</p></div>
+      <div class="card"><h3><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 15l5-4 4 3 3-3 6 5"/></svg>End-of-game gallery</h3><p>Every drawing from the session is kept and shown with its word beside the final scoreboard.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ 6. BUILT WITH ═══════════════════════════════════════════════ -->
+<section id="stack" class="pad-sm">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow">Built with</p>
+      <h2>The stack, and where the drawings go</h2>
+    </div>
+    <ul class="chips">
+      <li>Next.js 16</li><li>React 19</li><li>TypeScript</li><li>Tailwind CSS v4</li>
+      <li>Supabase Postgres</li><li>Supabase Realtime</li><li>Vercel AI SDK</li><li>Claude Haiku 4.5</li><li>Vercel</li>
+    </ul>
+    <p class="note">Each room is a single JSON row in Supabase Postgres, updated with optimistic concurrency and pushed to players over a Realtime channel. Your name and avatar never leave your own browser. Bot guesses and themed word lists call Claude Haiku 4.5, which I pay for.</p>
+  </div>
+</section>
+
+<!-- ══ 7. FAQ ══════════════════════════════════════════════════════ -->
+<section id="faq" class="pad-sm">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow">FAQ</p>
+      <h2>Reasonable questions</h2>
+    </div>
+    <div class="faq">
+      <details open><summary>Is it free?</summary><p>Yes, and there are no ads. The bot guesses and the themed word lists call a language model that I pay for, so please don’t leave a room open overnight.</p></details>
+      <details><summary>Do I need an account?</summary><p>No. A display name and an avatar are the whole identity, and both are picked on the same screen as the create button. Nothing is emailed or verified.</p></details>
+      <details><summary>Where does my data go?</summary><p>Room state — players, scores, the current word — sits in a Supabase Postgres row. Your name and avatar stay in your browser. A drawing only leaves the room when a bot is guessing it.</p></details>
+      <details><summary>How many people do I need?</summary><p>Two, and at least one of them has to be human. Bots make up the difference. Ten players is the cap, three of which can be bots.</p></details>
+      <details><summary>Does it work on my phone?</summary><p>Yes. Install it from the browser menu and it runs full screen with its own keyboard. There is no offline mode — the whole game is other people, live.</p></details>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ══ FOOTER ══════════════════════════════════════════════════════ -->
+<footer>
+  <div class="wrap foot">
+    <div>
+      <a class="wordmark" href="#top" style="text-decoration:none"><b>Doodle <em>Disaster</em></b><span>draw and guess</span></a>
+      <small style="margin-top:12px">
+        Built by <a class="plain" href="https://karthikrajan.info" rel="noopener">Karthik Rajan</a>.<br>
+        Last updated <time datetime="2026-08">August 2026</time>.
+      </small>
+    </div>
+    <div class="links">
+      <a class="btn btn-primary" href="https://doodle-disaster.vercel.app" rel="noopener">Open the app</a>
+      <a class="btn btn-ghost" href="https://github.com/kbrovibes/doodle-disaster" rel="noopener">View source on GitHub</a>
+      <a class="btn btn-ghost" href="https://kbrovibes.github.io/">All projects</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+/* ============================================================
+   Markup-driven: add or remove .slide elements (and matching
+   .dot buttons) and the carousel adapts.
+   ============================================================ */
+(function () {
+  "use strict";
+  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+  /* ---------- 1. Carousel ---------- */
+  var track = document.getElementById("track");
+  if (track) {
+    var slides = Array.prototype.slice.call(track.querySelectorAll(".slide"));
+    var dots   = Array.prototype.slice.call(document.querySelectorAll(".dot"));
+    var live   = document.querySelector("[data-live]");
+    var toggle = document.querySelector("[data-toggle]");
+    var index  = 0;
+    var paused = false;
+    var resting = true;
+    var timer  = null;
+    var AUTOPLAY_MS = 6500;
+
+    function label(i) {
+      var s = slides[i];
+      var h = s && s.querySelector(".copy h3");
+      return "Slide " + (i + 1) + " of " + slides.length + (h ? ": " + h.textContent.trim() : "");
+    }
+
+    function paint(i) {
+      index = i;
+      dots.forEach(function (d, n) { d.setAttribute("aria-current", n === i ? "true" : "false"); });
+      if (live) live.textContent = label(i);
+    }
+
+    function goTo(i, smooth) {
+      var n = (i + slides.length) % slides.length;
+      var target = n * track.clientWidth;
+      var from = track.scrollLeft;
+      track.scrollTo({
+        left: target,
+        behavior: smooth && !reduce.matches ? "smooth" : "auto"
+      });
+      /* Some browsers ignore smooth scrolling inside a snap container.
+         If nothing has moved shortly after, jump there instead. */
+      if (smooth) {
+        setTimeout(function () {
+          if (track.scrollLeft === from && Math.abs(target - from) > 4) {
+            track.scrollLeft = target;
+          }
+        }, 260);
+      }
+      paint(n);
+    }
+
+    var raf = null;
+    track.addEventListener("scroll", function () {
+      if (raf) return;
+      raf = requestAnimationFrame(function () {
+        raf = null;
+        var n = Math.round(track.scrollLeft / track.clientWidth);
+        if (n !== index && slides[n]) paint(n);
+      });
+    }, { passive: true });
+
+    dots.forEach(function (d, n) {
+      d.addEventListener("click", function () { rest(false); goTo(n, true); });
+    });
+    var prev = document.querySelector("[data-prev]");
+    var next = document.querySelector("[data-next]");
+    if (prev) prev.addEventListener("click", function () { rest(false); goTo(index - 1, true); });
+    if (next) next.addEventListener("click", function () { rest(false); goTo(index + 1, true); });
+
+    track.addEventListener("keydown", function (e) {
+      if (e.key === "ArrowRight") { e.preventDefault(); rest(false); goTo(index + 1, true); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); rest(false); goTo(index - 1, true); }
+      else if (e.key === "Home") { e.preventDefault(); rest(false); goTo(0, true); }
+      else if (e.key === "End") { e.preventDefault(); rest(false); goTo(slides.length - 1, true); }
+    });
+
+    var PLAY = '<path d="M4 2.5v11l9-5.5z"></path>';
+    var PAUSE = '<rect x="4" y="3" width="3" height="10" rx="1"></rect><rect x="9" y="3" width="3" height="10" rx="1"></rect>';
+
+    function rest(v) { resting = v; }
+
+    function tick() {
+      if (paused || !resting || document.hidden) return;
+      goTo(index + 1, true);
+    }
+
+    function start() {
+      stop();
+      if (reduce.matches) return;
+      timer = setInterval(tick, AUTOPLAY_MS);
+    }
+    function stop() { if (timer) { clearInterval(timer); timer = null; } }
+
+    function setPaused(v) {
+      paused = v;
+      if (toggle) {
+        toggle.setAttribute("aria-pressed", v ? "true" : "false");
+        toggle.setAttribute("aria-label", v ? "Resume automatic slide rotation" : "Pause automatic slide rotation");
+        var icon = toggle.querySelector("[data-icon]");
+        if (icon) icon.innerHTML = v ? PLAY : PAUSE;
+      }
+    }
+
+    if (toggle) {
+      if (reduce.matches) { toggle.hidden = true; }
+      toggle.addEventListener("click", function () { setPaused(!paused); });
+    }
+
+    ["pointerenter", "pointerdown", "focusin"].forEach(function (ev) {
+      track.addEventListener(ev, function () { rest(false); });
+    });
+    ["pointerleave", "focusout"].forEach(function (ev) {
+      track.addEventListener(ev, function () { rest(true); });
+    });
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) stop(); else start();
+    });
+    reduce.addEventListener("change", function () { start(); if (toggle) toggle.hidden = reduce.matches; });
+
+    var rt = null;
+    window.addEventListener("resize", function () {
+      clearTimeout(rt);
+      rt = setTimeout(function () { goTo(index, false); }, 120);
+    });
+
+    paint(0);
+    start();
+  }
+
+  /* ---------- 2. Header scroll-spy ---------- */
+  var navLinks = Array.prototype.slice.call(document.querySelectorAll(".site nav a"));
+  var targets = navLinks
+    .map(function (a) { return document.querySelector(a.getAttribute("href")); })
+    .filter(Boolean);
+
+  if (targets.length && "IntersectionObserver" in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        navLinks.forEach(function (a) {
+          a.setAttribute("aria-current", a.getAttribute("href") === "#" + entry.target.id ? "true" : "false");
+        });
+      });
+    }, { rootMargin: "-45% 0px -50% 0px", threshold: 0 });
+    targets.forEach(function (t) { io.observe(t); });
+  }
+})();
+</script>
+</body>
+</html>
