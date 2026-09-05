@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { THEMES } from "@/lib/wordbank/themes";
 import {
   addBot,
   addPlayer,
   advance,
   chooseWord,
+  endGame,
+  giveWord,
   handleGuess,
   kickPlayer,
   markConnected,
@@ -17,8 +20,8 @@ import {
 import { simulatedGuess, visionGuess } from "@/lib/bots";
 import { buildPlan, hashStr } from "@/lib/botdraw";
 import { pickAvatar } from "@/lib/names";
-import { generateThemedWords } from "@/lib/theme";
-import { loadRoom, RoomError, withRoom } from "@/lib/server";
+import { generateThemedWords, parseWordList } from "@/lib/theme";
+import { db, loadRoom, RoomError, withRoom } from "@/lib/server";
 import { Player } from "@/lib/types";
 
 type Params = { params: Promise<{ id: string }> };
@@ -99,7 +102,7 @@ export async function POST(req: NextRequest, { params }: Params) {
           }
           player.name = name;
           const chosen = String(body.avatar ?? "");
-          player.avatar = /^a(\d|1\d)$/.test(chosen)
+          player.avatar = /^a([0-9]|[1-3][0-9])$/.test(chosen)
             ? chosen
             : pickAvatar(s.players.map((p) => p.avatar));
           addPlayer(s, player);
@@ -146,24 +149,60 @@ export async function POST(req: NextRequest, { params }: Params) {
         const drawSeconds = Number(body.drawSeconds);
         const difficulty = String(body.difficulty ?? "");
         const roundsOk = Number.isInteger(rounds) && rounds >= 1 && rounds <= 20;
-        const drawOk = [45, 60, 75, 90].includes(drawSeconds);
-        const diffOk = ["easy", "medium", "hard"].includes(difficulty);
-        if (!roundsOk && !drawOk && !diffOk) {
+        const drawOk = [60, 75, 120].includes(drawSeconds);
+        const diffOk = ["kids", "medium", "hard", "ultra"].includes(difficulty);
+        const wordSource = String(body.wordSource ?? "");
+        const sourceOk = ["bank", "giver"].includes(wordSource);
+        const rawPacks = body.themePacks;
+        const known = new Set(THEMES.map((t) => t.key));
+        const themePacks = Array.isArray(rawPacks)
+          ? rawPacks
+              .filter((k: unknown): k is string => typeof k === "string")
+              .filter((k) => known.has(k))
+              .slice(0, 12)
+          : [];
+        // an unknown pack used to be stored verbatim and would have dealt from
+        // an empty pool
+        if (Array.isArray(rawPacks) && themePacks.length !== rawPacks.length)
+          return NextResponse.json(
+            { error: "Unknown theme pack" },
+            { status: 400 }
+          );
+        const themeOk = Array.isArray(rawPacks) || rawPacks === null;
+        // a bad value must not ride along unnoticed just because a sibling
+        // field was valid — the caller would think it applied
+        const sent = (k: string) => body[k] !== undefined && body[k] !== null;
+        if ((sent("rounds") && !roundsOk) || (sent("drawSeconds") && !drawOk) ||
+            (sent("difficulty") && !diffOk) ||
+            (sent("wordSource") && !sourceOk)) {
           return NextResponse.json(
             {
               error:
-                "Pass rounds (1-20), drawSeconds (45|60|75|90) and/or difficulty (easy|medium|hard) at the top level",
+                "Bad value: rounds (1-20), drawSeconds (60|75|120), difficulty (kids|medium|hard|ultra), wordSource (bank|giver)",
+            },
+            { status: 400 }
+          );
+        }
+        if (!roundsOk && !drawOk && !diffOk && !themeOk && !sourceOk) {
+          return NextResponse.json(
+            {
+              error:
+                "Pass rounds (1-20), drawSeconds (60|75|120) and/or difficulty (kids|medium|hard|ultra) at the top level",
             },
             { status: 400 }
           );
         }
         const { state } = await withRoom(id, (s) => {
           if (s.hostId !== playerId) throw new RoomError("Only the host");
-          if (s.phase !== "lobby") throw new RoomError("Game in progress");
+          // settings can be tuned mid-game too; they apply from the next turn
           if (roundsOk) s.settings.rounds = rounds;
           if (drawOk) s.settings.drawSeconds = drawSeconds;
           if (diffOk)
-            s.settings.difficulty = difficulty as "easy" | "medium" | "hard";
+            s.settings.difficulty = difficulty as "kids" | "medium" | "hard" | "ultra";
+          if (themeOk)
+            s.settings.themePacks = themePacks.length ? themePacks : null;
+          // takes effect from the next turn, like every other setting here
+          if (sourceOk) s.settings.wordSource = wordSource as "bank" | "giver";
         });
         return NextResponse.json({
           state: sanitize(state, playerId, Date.now()),
@@ -172,6 +211,15 @@ export async function POST(req: NextRequest, { params }: Params) {
       case "choose": {
         const { state } = await withRoom(id, (s, now) => {
           chooseWord(s, playerId, Number(body.index), now);
+        });
+        return NextResponse.json({
+          state: sanitize(state, playerId, Date.now()),
+        });
+      }
+      case "give": {
+        // giver mode: a word one player typed for another to draw
+        const { state } = await withRoom(id, (s, now) => {
+          giveWord(s, playerId, String(body.word ?? ""), now);
         });
         return NextResponse.json({
           state: sanitize(state, playerId, Date.now()),
@@ -232,6 +280,34 @@ export async function POST(req: NextRequest, { params }: Params) {
           state: sanitize(state, playerId, Date.now()),
         });
       }
+      case "shot": {
+        // the artist (or the host, when a bot drew) uploads the finished
+        // drawing once per turn so everyone's gallery matches
+        const image = String(body.image ?? "");
+        const { state: s } = await loadRoom(id);
+        if (s.phase !== "reveal" || !s.lastTurn || s.lastTurn.skipped)
+          return NextResponse.json({ ok: false });
+        const artist = s.players.find((p) => p.id === s.lastTurn!.drawerId);
+        const mayUpload =
+          playerId === s.lastTurn.drawerId ||
+          (artist?.isBot && s.hostId === playerId);
+        if (!mayUpload) return NextResponse.json({ ok: false });
+        if (!image.startsWith("data:image/") || image.length > 90_000)
+          return NextResponse.json({ ok: false });
+        const turn = s.round * 1000 + s.turnIndex;
+        const { error } = await db.from("doodle_shots").upsert(
+          {
+            room_id: id,
+            turn,
+            word: s.lastTurn.word,
+            drawer_id: s.lastTurn.drawerId,
+            image,
+          },
+          { onConflict: "room_id,turn" }
+        );
+        if (error) console.error("shot upload failed", error.message);
+        return NextResponse.json({ ok: !error });
+      }
       case "botplan": {
         // returns coordinates only — never the word, so driving the bot
         // gives the host no more information than watching the canvas
@@ -279,8 +355,10 @@ export async function POST(req: NextRequest, { params }: Params) {
       case "theme": {
         const themeText = String(body.theme ?? "").trim();
         if (themeText) {
-          // generate BEFORE taking the room lock; can take a few seconds
-          const words = await generateThemedWords(themeText);
+          // a pasted list is used as-is; anything else goes to the word wizard.
+          // Either way, generate BEFORE taking the room lock.
+          const words =
+            parseWordList(themeText) ?? (await generateThemedWords(themeText));
           const { state } = await withRoom(id, (s) => {
             if (s.hostId !== playerId) throw new RoomError("Only the host");
             if (s.phase !== "lobby") throw new RoomError("Game in progress");
@@ -306,6 +384,17 @@ export async function POST(req: NextRequest, { params }: Params) {
           state: sanitize(state, playerId, Date.now()),
         });
       }
+      case "pass": {
+        // the drawer giving up on their own turn
+        const { state } = await withRoom(id, (s, now) => {
+          if (s.drawerId !== playerId)
+            throw new RoomError("Only the drawer can pass");
+          skipTurn(s, now);
+        });
+        return NextResponse.json({
+          state: sanitize(state, playerId, Date.now()),
+        });
+      }
       case "skip": {
         const { state } = await withRoom(id, (s, now) => {
           if (s.hostId !== playerId) throw new RoomError("Only the host can skip");
@@ -326,7 +415,17 @@ export async function POST(req: NextRequest, { params }: Params) {
           state: sanitize(state, playerId, Date.now()),
         });
       }
+      case "endgame": {
+        const { state } = await withRoom(id, (s) => {
+          if (s.hostId !== playerId) throw new RoomError("Only the host");
+          endGame(s);
+        });
+        return NextResponse.json({
+          state: sanitize(state, playerId, Date.now()),
+        });
+      }
       case "again": {
+        await db.from("doodle_shots").delete().eq("room_id", id);
         const { state } = await withRoom(id, (s) => {
           playAgain(s);
         });

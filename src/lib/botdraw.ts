@@ -1343,6 +1343,8 @@ export function buildPlan(
     }
 
     const pts = handify(st.pts, rnd, !!st.sealed, !!st.curve);
+    // a sealed outline holds paint better with a slightly fatter nib
+    const width = (st.w ?? 11) + (st.sealed ? 3 : 0);
     const len = pathLength(pts);
     // long confident lines are drawn faster per unit than fiddly details
     const speed = (len > 40 ? 128 : 88) + rnd() * 45; // units/sec
@@ -1354,7 +1356,7 @@ export function buildPlan(
       kind: "stroke",
       pts: pts.flatMap(toWire),
       color: st.color ?? INK,
-      w: st.w ?? 11,
+      w: width,
       delay,
       duration,
     });

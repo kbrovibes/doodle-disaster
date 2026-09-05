@@ -351,9 +351,33 @@ export function Wordmark({ className }: { className?: string }) {
   );
 }
 
+/** Three finder squares and a scattering of modules — a QR, at 24px. */
+export function IconQr(p: P) {
+  return base(p, (
+    <>
+      <rect x="3.5" y="3.5" width="6.5" height="6.5" rx="1.4" />
+      <rect x="14" y="3.5" width="6.5" height="6.5" rx="1.4" />
+      <rect x="3.5" y="14" width="6.5" height="6.5" rx="1.4" />
+      <path d="M14 14h2.5v2.5H14zM18 18h2.5v2.5H18M14 20.5h2.5" />
+    </>
+  ));
+}
+
 export function IconX(p: P) {
   return base(p, (
     <path d="M6 6.5c4 3.6 8 7.5 11.5 11.5M18 6c-4.2 3.8-8 7.8-11.5 11.5" stroke="var(--coral, #ff6b6b)" />
+  ));
+}
+
+export function IconGear(p: P) {
+  return base(p, (
+    <>
+      <path
+        d="M12 3.2l1.5 2.3 2.7-.5.6 2.7 2.5 1.1-1.3 2.4 1.3 2.4-2.5 1.1-.6 2.7-2.7-.5L12 20.8l-1.5-2.3-2.7.5-.6-2.7-2.5-1.1 1.3-2.4-1.3-2.4 2.5-1.1.6-2.7 2.7.5L12 3.2Z"
+        fill="var(--sun, #ffd93d)"
+      />
+      <circle cx="12" cy="12" r="3.1" fill="#fff" />
+    </>
   ));
 }
 

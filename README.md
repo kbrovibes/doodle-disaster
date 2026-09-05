@@ -7,7 +7,13 @@ send the link, take turns scribbling while everyone else shouts guesses into the
 chat. No accounts, no installs, no ads.
 
 - **Play it:** <https://doodle-disaster.vercel.app>
-- **About page:** <https://kbrovibes.github.io/doodle-disaster/>
+- **How it works:** <https://doodle-disaster.vercel.app/architecture.html> — an
+  interactive walkthrough of the realtime model, the server-authoritative
+  scoring, and how party mode keeps a secret on a mirrored TV.
+- **About page:** <https://doodle-disaster.vercel.app/about.html> — refreshed
+  for the current feature set (also mirrored at
+  <https://kbrovibes.github.io/doodle-disaster/>; copy `gh-pages-index.html`
+  from the project root over that repo's `index.html` to update it).
 
 ---
 
@@ -19,17 +25,23 @@ chat. No accounts, no installs, no ads.
 2. **Send the link.** Anyone who opens it types a name and they're in. Two
    connected players is the minimum, at least one of whom has to be human, and
    ten is the cap.
-3. **Set the rules.** The host picks a difficulty (easy / medium / hard),
-   5, 10 or 15 rounds, and a 45, 60 or 75 second draw timer — and can add up to
-   three bots to fill out a small room.
-4. **Take turns.** Each turn one player gets three words tagged *easy*, *normal*
-   or *chaos* and fifteen seconds to choose one. Dither and the turn is
+3. **Set the rules.** The host picks a difficulty (KIDS / medium / hard /
+   ultra), 3, 5 or 10 rounds, a 60, 75 or 120 second draw timer, and where
+   words come from — and can add up to three bots to fill out a small room.
+4. **Take turns.** Each turn one player gets three words tagged *kids*,
+   *normal* or *chaos* and thirty seconds to choose one. Dither and the turn is
    forfeited. Everyone else types guesses.
-5. **Score.** Guessing early is worth more than typing fast: 100 points for
+5. **Or let someone pick for you.** Set *words come from → another player* and
+   each turn one player hands the drawer a word instead — typed themselves, or
+   dealt from the deck if nothing comes to mind. The giver sees every guess and
+   can chat, but scores nothing that turn, and the job goes round the table the
+   same way the pen does. Needs three players; with fewer, or when a bot is
+   drawing, the turn quietly falls back to the deck.
+6. **Score.** Guessing early is worth more than typing fast: 100 points for
    first, then 85, 70, 60, 55, 50, plus up to 25 for time left on the clock. The
    drawer earns 35 per correct guess, +25 if everybody gets it, and 10 bravery
    points if nobody does.
-6. **Read the damage.** After the last round: medals, confetti, and a gallery of
+7. **Read the damage.** After the last round: medals, confetti, and a gallery of
    every drawing the room produced.
 
 ### Things that are in there
@@ -47,8 +59,12 @@ chat. No accounts, no installs, no ads.
   of the canvas to the server, which asks Claude Haiku 4.5 to guess it against
   the same letter mask everyone else can see. If the model is unavailable it
   falls back to a local simulator so turns still resolve.
-- **499 curated words** across three tiers, dealt like a deck: no word repeats
-  while the room still has unplayed ones.
+- **5,100+ curated words** across four tiers, dealt like a deck: no word
+  repeats while the room still has unplayed ones. The KIDS tier is its own
+  1,066-word pool, filtered twice — once for a five year old's vocabulary, once
+  for whether the drawing is telling apart from some other word's drawing.
+- **Word givers** — an optional mode where a player, not the deck, sets each
+  turn's word. See the walkthrough above.
 - **AI word themes** — the host can type a theme ("cricket", "90s cartoons") and
   the room gets its own easy / normal / chaos lists. Rude themes are refused by
   the model, with a regex backstop behind it.
@@ -64,6 +80,12 @@ chat. No accounts, no installs, no ads.
   mode; the game is live by definition.
 - **Sound** — a tiny WebAudio synth for correct guesses, the countdown tick, and
   the end of a game. Mutable.
+
+- **Party mode invites** — the cast screen shows a QR alongside the four-letter
+  code, plus copy-link, copy-code and share buttons, and the same panel is one
+  tap away over a running game for whoever turns up late. The QR is encoded
+  in-app (`lib/qr.ts`) rather than fetched: the telly may well be the one
+  device on the network without a route out.
 
 ## Stack
 

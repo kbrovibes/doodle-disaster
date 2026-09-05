@@ -71,7 +71,7 @@ export function getSavedAvatar(): string {
     const a = localStorage.getItem("dd_avatar");
     if (a && /^a\d+$/.test(a)) return a;
   } catch {}
-  return `a${Math.floor(Math.random() * 20)}`;
+  return `a${Math.floor(Math.random() * 40)}`;
 }
 
 export function saveAvatar(token: string) {
@@ -80,9 +80,17 @@ export function saveAvatar(token: string) {
   } catch {}
 }
 
+/**
+ * Your seat in a room. Kept in localStorage so closing the browser doesn't
+ * cost you the game; sessionStorage acts as a per-tab override, which lets a
+ * second tab deliberately sit down as a different player.
+ */
 export function getPlayerId(roomId: string): string | null {
   try {
-    return sessionStorage.getItem(`dd_pid:${roomId}`);
+    return (
+      sessionStorage.getItem(`dd_pid:${roomId}`) ??
+      localStorage.getItem(`dd_pid:${roomId}`)
+    );
   } catch {
     return null;
   }
@@ -90,98 +98,21 @@ export function getPlayerId(roomId: string): string | null {
 
 export function savePlayerId(roomId: string, playerId: string) {
   try {
-    if (playerId) sessionStorage.setItem(`dd_pid:${roomId}`, playerId);
-    else sessionStorage.removeItem(`dd_pid:${roomId}`);
+    if (playerId) {
+      sessionStorage.setItem(`dd_pid:${roomId}`, playerId);
+      localStorage.setItem(`dd_pid:${roomId}`, playerId);
+    } else {
+      sessionStorage.removeItem(`dd_pid:${roomId}`);
+      localStorage.removeItem(`dd_pid:${roomId}`);
+    }
   } catch {}
 }
 
-// --- tiny synth for game sounds -----------------------------------------
+// --- feedback -----------------------------------------------------------
 
-let ctx: AudioContext | null = null;
-let muted = false;
-export function setMuted(m: boolean) {
-  muted = m;
-  try {
-    localStorage.setItem("dd_muted", m ? "1" : "");
-  } catch {}
-}
-export function getMuted(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    return !!localStorage.getItem("dd_muted");
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Browsers start an AudioContext suspended until the page has been touched.
- * Call this from a real user gesture so later game sounds actually play.
- */
-export function unlockAudio() {
-  try {
-    if (!ctx) ctx = new AudioContext();
-    if (ctx.state === "suspended") ctx.resume();
-  } catch {}
-}
-
-function beep(freq: number, at: number, dur = 0.12, gain = 0.16, type: OscillatorType = "sine") {
-  if (!ctx) return;
-  const o = ctx.createOscillator();
-  const g = ctx.createGain();
-  o.type = type;
-  o.frequency.value = freq;
-  g.gain.setValueAtTime(gain, ctx.currentTime + at);
-  g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + at + dur);
-  o.connect(g).connect(ctx.destination);
-  o.start(ctx.currentTime + at);
-  o.stop(ctx.currentTime + at + dur + 0.02);
-}
-
-/** Short buzz on supported devices (Android); iOS gets the key click instead. */
-export function haptic(ms = 9) {
+/** Short buzz on supported devices (Android/Chrome). No-op elsewhere. */
+export function haptic(ms = 8) {
   try {
     navigator.vibrate?.(ms);
-  } catch {}
-}
-
-export function sound(
-  kind: "correct" | "othercorrect" | "tick" | "start" | "over" | "pop" | "key"
-) {
-  if (muted || typeof window === "undefined") return;
-  try {
-    if (!ctx) ctx = new AudioContext();
-    if (ctx.state === "suspended") ctx.resume();
-    switch (kind) {
-      case "correct":
-        beep(523, 0, 0.1, 0.2);
-        beep(659, 0.09, 0.1, 0.2);
-        beep(784, 0.18, 0.22, 0.22);
-        break;
-      case "othercorrect":
-        beep(660, 0, 0.08, 0.12);
-        beep(880, 0.07, 0.1, 0.12);
-        break;
-      case "tick":
-        beep(880, 0, 0.06, 0.1, "square");
-        break;
-      case "start":
-        beep(440, 0, 0.1, 0.18);
-        beep(554, 0.1, 0.1, 0.18);
-        beep(659, 0.2, 0.18, 0.2);
-        break;
-      case "over":
-        beep(523, 0, 0.15, 0.2);
-        beep(659, 0.15, 0.15, 0.2);
-        beep(784, 0.3, 0.15, 0.2);
-        beep(1047, 0.45, 0.35, 0.24);
-        break;
-      case "pop":
-        beep(300, 0, 0.07, 0.14, "triangle");
-        break;
-      case "key":
-        beep(1250, 0, 0.025, 0.05, "square");
-        break;
-    }
   } catch {}
 }

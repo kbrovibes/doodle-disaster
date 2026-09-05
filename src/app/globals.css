@@ -1,10 +1,19 @@
 @import "tailwindcss";
 
 :root {
-  --paper: #fdf8ef;
-  --ink: #26232e;
-  --coral: #ff6b6b;
-  --sun: #ffd93d;
+  /* Riso Clay — riso ink on warm paper, clay surfaces, generous radii.
+     Surfaces are told apart by tint and lift, never by an outline. */
+  --paper: #fff8ee;
+  --ink: #241b12;
+  --coral: #cf3f1c;
+  /* the bright riso orange stays, for fills that never carry white text */
+  --coral-bright: #ff5c39;
+  --sun: #ffc93c;
+  --mint: #cbf3d8;
+  --well: #fdf0dc;
+  --lift: 0 10px 22px -12px rgba(80, 45, 20, 0.34);
+  --lift-sm: 0 5px 12px -6px rgba(80, 45, 20, 0.32);
+  --lift-lg: 0 16px 34px -18px rgba(80, 45, 20, 0.4);
 }
 
 @theme inline {
@@ -12,6 +21,9 @@
   --color-ink: var(--ink);
   --color-coral: var(--coral);
   --color-sun: var(--sun);
+  --color-mint: var(--mint);
+  --color-well: var(--well);
+  --color-coral-bright: var(--coral-bright);
   --font-sans: var(--font-body);
   --font-display: var(--font-display);
 }
@@ -28,8 +40,9 @@ body {
   font-family: var(--font-display), var(--font-body), system-ui, sans-serif;
 }
 
+/* the single biggest lever: comic-book offset becomes a soft clay lift */
 .shadow-doodle {
-  box-shadow: 3px 3px 0 rgba(38, 35, 46, 0.85);
+  box-shadow: var(--lift-sm), inset 0 -2px 0 rgba(80, 45, 20, 0.05);
 }
 
 .btn-primary {
@@ -42,10 +55,10 @@ body {
   color: white;
   font-weight: 800;
   font-family: var(--font-display), system-ui, sans-serif;
-  border-radius: 0.9rem;
+  border-radius: 1rem;
   padding: 0.7rem 1.4rem;
-  box-shadow: 3px 3px 0 rgba(38, 35, 46, 0.85);
-  transition: transform 0.1s ease, box-shadow 0.1s ease;
+  box-shadow: var(--lift);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
   cursor: pointer;
 }
 .btn-primary svg {
@@ -54,11 +67,11 @@ body {
 }
 .btn-primary:hover:not(:disabled) {
   transform: translateY(-2px);
-  box-shadow: 4px 5px 0 rgba(38, 35, 46, 0.85);
+  box-shadow: var(--lift-lg);
 }
 .btn-primary:active:not(:disabled) {
-  transform: translateY(1px) scale(0.98);
-  box-shadow: 1px 1px 0 rgba(38, 35, 46, 0.85);
+  transform: translateY(2px) scale(0.98);
+  box-shadow: 0 2px 6px -3px rgba(80, 45, 20, 0.4);
 }
 
 @keyframes floatUp {
@@ -122,17 +135,28 @@ body {
 }
 
 .dd-game {
-  height: 100dvh;
+  /* --sh is the visible height (viewport minus the device keyboard); dvh is
+     only the pre-hydration fallback */
+  height: var(--sh, 100dvh);
   overflow: hidden;
   overscroll-behavior: none;
 }
 
-/* players who already guessed bounce while the rest sweat */
+/* stop a horizontal drag from being read as "go back a page" (Chrome/Android
+   overscroll nav). iOS' edge swipe needs the JS guard in edgeguard.ts too. */
+html,
+body {
+  overscroll-behavior-x: none;
+}
+
+/* players who already guessed bounce while the rest sweat. Scale is part of
+   the transform so the hop reads from across the room without ever nudging
+   the layout around it. */
 @keyframes guessedHop {
-  0%, 100% { transform: translateY(0) rotate(0deg); }
-  25% { transform: translateY(-4px) rotate(-9deg); }
-  50% { transform: translateY(0) rotate(0deg); }
-  75% { transform: translateY(-2px) rotate(7deg); }
+  0%, 100% { transform: translateY(0) rotate(0deg) scale(1); }
+  20% { transform: translateY(-5px) rotate(-11deg) scale(1.14); }
+  45% { transform: translateY(0) rotate(0deg) scale(1); }
+  70% { transform: translateY(-3px) rotate(8deg) scale(1.07); }
 }
 .dd-hop {
   animation: guessedHop 1.1s ease-in-out infinite;
@@ -162,6 +186,28 @@ body {
   animation: caretBlink 1s step-end infinite;
 }
 
+/* iOS-style frosted material — brightens and blurs instead of greying out */
+.dd-frost {
+  background: rgba(255, 248, 238, 0.62);
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+}
+
+/* instax/polaroid frame for the end-of-round photo */
+.dd-polaroid {
+  background: #fff;
+  border: 1px solid rgba(80, 45, 20, 0.1);
+  border-radius: 14px;
+  padding: 8px 8px 10px;
+  box-shadow: var(--lift-lg);
+  /* square to the frame — a tilted photo is harder to read the scores off */
+  animation: photoDrop 0.42s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+@keyframes photoDrop {
+  0% { transform: translateY(-14px) scale(0.92); opacity: 0; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+
 @keyframes popIn {
   0% { transform: scale(0); }
   70% { transform: scale(1.5); }
@@ -177,4 +223,49 @@ body {
 }
 .animate-wiggle {
   animation: wiggle 2.4s ease-in-out infinite;
+}
+
+
+/* --- Riso Clay: no outlined cards, and everything is rounder ------------- */
+
+/*
+ * Only the FULL-STRENGTH ink outline becomes a whisper. Deliberately a plain
+ * class selector, not [class*="border-ink"]: the substring form also matched
+ * `focus:border-ink`, `hover:border-ink` and `border-ink/20`, and with
+ * !important it beat every focus ring in the app. An element carrying
+ * `border-ink/20 focus:border-ink` has no `border-ink` class at all, so it is
+ * untouched here and its focus state still fires.
+ */
+.border-ink {
+  border-color: rgba(36, 27, 18, 0.1);
+}
+/* dashed outlines are the whole point of the element they are on */
+.border-dashed.border-ink,
+[class*="border-dashed"][class*="border-ink"] {
+  border-color: rgba(36, 27, 18, 0.28);
+}
+
+/* rounder, but not so round that a 24px chip turns into a pill */
+.rounded-lg { border-radius: 10px }
+.rounded-xl { border-radius: 14px }
+.rounded-2xl { border-radius: 18px }
+.rounded-3xl { border-radius: 24px }
+/* ...and the speech-bubble tail survives the blanket radius */
+.rounded-bl-md { border-bottom-left-radius: 5px }
+
+/* secondary label greys sat at 2.8:1 on paper; 0.62 alpha clears AA at 4.7:1 */
+.text-ink\/40, .text-ink\/45, .text-ink\/50 { color: rgba(36, 27, 18, 0.62) }
+
+/* a focus ring that cannot be washed out by the border rule above */
+:is(input, textarea, select):focus-visible,
+:is(input, textarea, select):focus {
+  border-color: rgba(36, 27, 18, 0.6);
+  outline: 2px solid rgba(36, 27, 18, 0.35);
+  outline-offset: 1px;
+}
+
+/* clay keys. No !important: the component collapses this inline on press and
+   that press feedback has to win. */
+.dd-nosel button[data-k]:not([data-k="pek"]):not([data-k="clr"]) {
+  box-shadow: 0 3px 0 rgba(80, 45, 20, 0.13);
 }

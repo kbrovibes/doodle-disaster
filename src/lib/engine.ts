@@ -1,5 +1,5 @@
 import { ClientState, Player, RoomState, Settings } from "./types";
-import { pickWordChoices } from "./words";
+import { isPlayableTheme, pickWordChoices, randomSalt, type Cursor } from "./words";
 import { pickBotWords } from "./botdraw";
 import { isClose, isCorrect } from "./text";
 
@@ -7,28 +7,101 @@ export class GameError extends Error {
   status = 400;
 }
 
-export const CHOOSE_SECONDS = 15;
+export const CHOOSE_SECONDS = 30;
 export const REVEAL_SECONDS = 6;
+/** nothing was drawn, so there is nothing to linger on */
+export const SKIP_REVEAL_SECONDS = 2;
 export const ADVANCE_GRACE_MS = 1500;
 
-export function newRoom(host: Player, settings?: Partial<Settings>): RoomState {
+/**
+ * The ring this room walks. Fixed for the life of the room (the old version
+ * re-derived it from the player list, so it reshuffled every time somebody
+ * joined). A room created with a seed carries on from where the group's last
+ * game left off; without one it starts a fresh ring at a random point.
+ */
+function ringOf(state: RoomState): { salt: number; cursor: Cursor } {
+  if (typeof state.wordSalt !== "number") state.wordSalt = randomSalt();
+  if (!state.wordCursor) state.wordCursor = {};
+  return { salt: state.wordSalt, cursor: state.wordCursor as Cursor };
+}
+
+export function newRoom(
+  host: Player,
+  settings?: Partial<Settings>,
+  seed?: { salt?: number; cursor?: Record<string, number> }
+): RoomState {
   return {
     phase: "lobby",
     players: [host],
     hostId: host.id,
-    settings: { rounds: 10, drawSeconds: 45, difficulty: "medium", ...settings },
+    founderId: host.id,
+    settings: { rounds: 5, drawSeconds: 75, difficulty: "medium", ...settings },
     order: [],
     round: 0,
     turnIndex: 0,
     drawerId: null,
+    giverId: null,
     wordChoices: [],
     word: null,
     phaseEndsAt: 0,
     guessed: {},
     drawerPoints: 0,
     usedWords: [],
+    // carry the group's ring forward from whoever made the room, so a second
+    // game of the night does not deal the same opening words as the first
+    wordSalt: typeof seed?.salt === "number" ? seed.salt : randomSalt(),
+    wordCursor: seed?.cursor ?? {},
     lastTurn: null,
   };
+}
+
+/**
+ * Who hands the drawer their word this turn: the next connected human after
+ * them in the turn order, so the job goes round the table the same way the pen
+ * does and nobody gives twice before everyone has given once.
+ *
+ * Returns null — meaning "the drawer picks off the deck as usual" — whenever
+ * giver mode cannot actually be played:
+ *
+ *   - the setting is off
+ *   - the drawer is a bot, which can only draw from its own small repertoire
+ *   - fewer than three people are connected, so somebody would be left with
+ *     nothing to do (drawer + giver + at least one guesser is the minimum)
+ *   - everyone else in the order is a bot or has dropped
+ *
+ * A turn therefore degrades to the classic game rather than stalling.
+ */
+export function giverFor(state: RoomState, drawerId: string): string | null {
+  if (state.settings.wordSource !== "giver") return null;
+  const drawer = state.players.find((p) => p.id === drawerId);
+  if (!drawer || drawer.isBot) return null;
+  if (state.players.filter((p) => p.connected).length < 3) return null;
+
+  const n = state.order.length;
+  if (n === 0) return null;
+  const at = Math.max(0, state.order.indexOf(drawerId));
+  for (let hop = 1; hop <= n; hop++) {
+    const id = state.order[(at + hop) % n];
+    if (id === drawerId) continue;
+    const p = state.players.find((x) => x.id === id);
+    if (p?.connected && !p.isBot) return id;
+  }
+  return null;
+}
+
+/**
+ * A word a person typed, rather than one off the deck. Same house rules as a
+ * theme pack (up to four words, letters and single spaces) because a giver
+ * naming a person or a film is exactly the point.
+ */
+export function cleanGivenWord(raw: string): string | null {
+  const w = raw
+    .toLowerCase()
+    .replace(/[^a-z ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (w.replace(/ /g, "").length < 2) return null;
+  return isPlayableTheme(w) ? w : null;
 }
 
 export function addPlayer(state: RoomState, p: Player): void {
@@ -46,8 +119,7 @@ export const BOT_ROSTER = [
 ] as const;
 
 export function addBot(state: RoomState): Player {
-  if (state.phase !== "lobby")
-    throw new GameError("Bots can only be added in the lobby");
+  if (state.phase === "gameover") throw new GameError("Game is over");
   const bots = state.players.filter((p) => p.isBot);
   if (bots.length >= BOT_ROSTER.length)
     throw new GameError(`Max ${BOT_ROSTER.length} bots`);
@@ -64,7 +136,7 @@ export function addBot(state: RoomState): Player {
     joinedAt: Date.now(),
     isBot: true,
   };
-  state.players.push(bot);
+  addPlayer(state, bot); // joins the draw order too when a game is running
   return bot;
 }
 
@@ -94,17 +166,41 @@ function beginChoosing(state: RoomState, now: number): void {
   const drawerId = state.order[state.turnIndex];
   state.phase = "choosing";
   state.drawerId = drawerId;
+  state.giverId = giverFor(state, drawerId);
   const drawer = state.players.find((p) => p.id === drawerId);
   // a bot can only draw what it knows how to draw
+  const ring = ringOf(state);
   const picked = drawer?.isBot
     ? pickBotWords(state.usedWords)
-    : pickWordChoices(
-        state.usedWords,
-        state.settings.difficulty ?? "medium",
-        state.customWords ?? undefined
-      );
+    : pickWordChoices(ring.cursor, state.settings.difficulty ?? "medium", {
+        salt: ring.salt,
+        themes: state.settings.themePacks ?? null,
+        custom: state.customWords
+          ? [
+              ...state.customWords.easy,
+              ...state.customWords.normal,
+              ...state.customWords.chaos,
+            ]
+          : undefined,
+      });
   state.wordChoices = picked.words;
   state.wordChoiceTiers = picked.tiers;
+  // the ring only ever moves forward, so a word cannot come round again until
+  // every other word in its tier has been dealt
+  if ("cursor" in picked && picked.cursor)
+    state.wordCursor = picked.cursor as Record<string, number>;
+  // remember what we merely SHOWED, not just what got drawn: the two you
+  // turned down used to come straight back round to the next player
+  const offered = state.offeredWords ?? [];
+  for (const w of picked.words) {
+    const k = w.toLowerCase();
+    const at = offered.indexOf(k);
+    if (at >= 0) offered.splice(at, 1);
+    offered.push(k);
+  }
+  // hold a long memory: a word you turned down coming back next turn reads as
+  // a repeat just as much as one you drew
+  state.offeredWords = offered.length > 1200 ? offered.slice(-1200) : offered;
   state.word = null;
   state.guessed = {};
   state.personalHints = {};
@@ -119,9 +215,31 @@ export function chooseWord(
   now: number
 ): void {
   if (state.phase !== "choosing") throw new GameError("Not choosing");
-  if (playerId !== state.drawerId) throw new GameError("Not the drawer");
+  // in giver mode the three dealt words are the giver's shortlist, not the
+  // drawer's menu — the drawer must not even be able to name one
+  const picker = state.giverId ?? state.drawerId;
+  if (playerId !== picker)
+    throw new GameError(
+      state.giverId ? "Not your word to give" : "Not the drawer"
+    );
   const word = state.wordChoices[index];
   if (!word) throw new GameError("That word wasn't on the menu!");
+  beginDrawing(state, word, now);
+}
+
+/** Giver mode: a word somebody typed for the drawer, rather than dealt. */
+export function giveWord(
+  state: RoomState,
+  playerId: string,
+  raw: string,
+  now: number
+): void {
+  if (state.phase !== "choosing") throw new GameError("Not choosing");
+  if (!state.giverId) throw new GameError("Nobody is giving words this turn");
+  if (playerId !== state.giverId) throw new GameError("Not your word to give");
+  const word = cleanGivenWord(raw);
+  if (!word)
+    throw new GameError("Letters and spaces only, up to four words");
   beginDrawing(state, word, now);
 }
 
@@ -132,8 +250,10 @@ function beginDrawing(state: RoomState, word: string, now: number): void {
   const key = word.toLowerCase();
   state.usedWords = state.usedWords.filter((w) => w !== key);
   state.usedWords.push(key);
-  if (state.usedWords.length > 300)
-    state.usedWords = state.usedWords.slice(-300);
+  // the deck is thousands deep; remember a long way back so a repeat needs a
+  // truly epic night before it can come round again
+  if (state.usedWords.length > 2000)
+    state.usedWords = state.usedWords.slice(-2000);
   state.wordChoices = [];
   state.phaseEndsAt = now + state.settings.drawSeconds * 1000;
 }
@@ -155,7 +275,10 @@ export function handleGuess(
     endTurn(state, now, false);
     return "expired";
   }
+  // both people who already know the word just talk; nothing they type is
+  // ever scored, and nothing is swallowed either — it all reaches the room
   if (playerId === state.drawerId) return "chat";
+  if (playerId === state.giverId) return "chat";
   if (state.guessed[playerId] !== undefined) return "chat"; // already got it
 
   if (isCorrect(text, state.word)) {
@@ -177,7 +300,8 @@ export function handleGuess(
       }
     }
     const guessers = state.players.filter(
-      (p) => p.id !== state.drawerId && p.connected
+      (p) =>
+        p.id !== state.drawerId && p.id !== state.giverId && p.connected
     );
     const allGuessed = guessers.every((p) => state.guessed[p.id] !== undefined);
     if (allGuessed) endTurn(state, now, false);
@@ -189,8 +313,10 @@ export function handleGuess(
 function endTurn(state: RoomState, now: number, skipped: boolean): void {
   const word = state.word ?? "";
   const drawer = state.players.find((p) => p.id === state.drawerId);
+  // the giver is out of the running by design, so they must not count toward
+  // "everyone got it" either — otherwise the drawer could never earn the bonus
   const guessers = state.players.filter(
-    (p) => p.id !== state.drawerId && p.connected
+    (p) => p.id !== state.drawerId && p.id !== state.giverId && p.connected
   );
   const correctCount = Object.keys(state.guessed).length;
   const everyoneGuessed =
@@ -207,12 +333,14 @@ function endTurn(state: RoomState, now: number, skipped: boolean): void {
   state.lastTurn = {
     word,
     drawerId: state.drawerId ?? "",
+    giverId: state.giverId,
     deltas,
     everyoneGuessed,
     skipped,
   };
   state.phase = "reveal";
-  state.phaseEndsAt = now + REVEAL_SECONDS * 1000;
+  state.phaseEndsAt =
+    now + (skipped ? SKIP_REVEAL_SECONDS : REVEAL_SECONDS) * 1000;
 }
 
 /** Called by any client when a phase timer expires (or drawer vanished). */
@@ -225,6 +353,14 @@ export function advance(state: RoomState, now: number): void {
       if (now + ADVANCE_GRACE_MS < state.phaseEndsAt && !drawerGone) return;
       // no word picked in time = turn forfeited. Auto-picking just produced a
       // dead round where nobody drew anything.
+      //
+      // Giver mode is the exception: there the drawer is sitting ready with a
+      // pen and it was somebody ELSE who dithered, so burning their turn
+      // punishes the wrong person. Deal off the deck and get on with it.
+      if (state.giverId && !drawerGone && state.wordChoices.length) {
+        beginDrawing(state, state.wordChoices[0], now);
+        return;
+      }
       state.word = null;
       endTurn(state, now, true);
       return;
@@ -250,10 +386,11 @@ export function advance(state: RoomState, now: number): void {
 function nextTurn(state: RoomState, now: number): void {
   const connected = state.players.filter((p) => p.connected);
   if (connected.length < 2) {
-    state.phase = "lobby";
+    // Don't tear the game down because people dropped — hold it open and let
+    // them come back. The host can end it deliberately if they'd rather.
+    state.phase = "reveal";
     state.drawerId = null;
-    state.word = null;
-    state.phaseEndsAt = 0;
+    state.phaseEndsAt = now + 25_000; // re-checked periodically
     return;
   }
   let idx = state.turnIndex;
@@ -267,6 +404,7 @@ function nextTurn(state: RoomState, now: number): void {
     if (round > state.settings.rounds) {
       state.phase = "gameover";
       state.drawerId = null;
+      state.giverId = null;
       state.word = null;
       state.phaseEndsAt = 0;
       return;
@@ -279,8 +417,19 @@ function nextTurn(state: RoomState, now: number): void {
       return;
     }
   }
-  // nobody drawable
-  state.phase = "lobby";
+  // nobody drawable right now — hold, don't end
+  state.phase = "reveal";
+  state.phaseEndsAt = now + 25_000;
+}
+
+/** Host deliberately calls it a night. */
+export function endGame(state: RoomState): void {
+  if (state.phase === "lobby" || state.phase === "gameover")
+    throw new GameError("No game running");
+  state.phase = "gameover";
+  state.drawerId = null;
+  state.giverId = null;
+  state.word = null;
   state.phaseEndsAt = 0;
 }
 
@@ -288,6 +437,7 @@ export function playAgain(state: RoomState): void {
   if (state.phase !== "gameover") throw new GameError("Game not over");
   state.phase = "lobby";
   state.drawerId = null;
+  state.giverId = null;
   state.word = null;
   state.round = 0;
   state.turnIndex = 0;
@@ -303,7 +453,7 @@ export function playAgain(state: RoomState): void {
 export function useHint(state: RoomState, playerId: string, now: number): void {
   if (state.phase !== "drawing" || !state.word)
     throw new GameError("Nothing to hint right now");
-  if (playerId === state.drawerId)
+  if (playerId === state.drawerId || playerId === state.giverId)
     throw new GameError("You know the word already!");
   if (state.guessed[playerId] !== undefined)
     throw new GameError("You already guessed it!");
@@ -325,14 +475,19 @@ export function useHint(state: RoomState, playerId: string, now: number): void {
   player.hintStreak = 0;
 }
 
-/** Host-only: end the current turn early (stuck or misbehaving drawer). */
+/**
+ * End the current turn early — the host skipping a stuck player, or the
+ * drawer passing on their own turn.
+ */
 export function skipTurn(state: RoomState, now: number): void {
   if (state.phase === "choosing") {
+    // no word was ever chosen, so there is nothing to reveal
     state.word = null;
     endTurn(state, now, true);
   } else if (state.phase === "drawing") {
-    // guessers keep what they earned; drawer paid per correct guess as usual
-    endTurn(state, now, Object.keys(state.guessed).length === 0);
+    // a word WAS chosen: reveal it (and the drawing) and keep any points
+    // guessers already earned
+    endTurn(state, now, false);
   } else {
     throw new GameError("Nothing to skip");
   }
@@ -354,6 +509,9 @@ export function kickPlayer(state: RoomState, targetId: string, now: number): voi
     if (next) state.hostId = next.id;
   }
   delete state.guessed[targetId];
+  if (state.giverId === targetId)
+    state.giverId =
+      state.phase === "choosing" ? giverFor(state, state.drawerId ?? "") : null;
   if (wasDrawer && (state.phase === "choosing" || state.phase === "drawing")) {
     if (state.phase === "choosing") state.word = null;
     endTurn(state, now, Object.keys(state.guessed).length === 0);
@@ -368,10 +526,17 @@ export function markConnected(
   const p = state.players.find((x) => x.id === playerId);
   if (!p) return;
   p.connected = connected;
+  // the giver closing their tab mid-pick would otherwise strand the turn
+  // until the clock ran out
+  if (!connected && state.giverId === playerId && state.phase === "choosing")
+    state.giverId = giverFor(state, state.drawerId ?? "");
   if (!connected && state.hostId === playerId) {
     const next = state.players.find((x) => x.connected && !x.isBot);
     if (next) state.hostId = next.id;
   }
+  // the person who made the room gets it back when they walk in again —
+  // otherwise a dropped signal permanently demotes whoever set the game up
+  if (connected && state.founderId === playerId) state.hostId = playerId;
 }
 
 // --- hints ---------------------------------------------------------------
@@ -427,6 +592,7 @@ export function sanitize(
   now: number
 ): ClientState {
   const isDrawer = playerId !== null && playerId === state.drawerId;
+  const isGiver = playerId !== null && playerId === state.giverId;
   const hasGuessed = playerId !== null && state.guessed[playerId] !== undefined;
   let mask: string | null = null;
   if (state.phase === "drawing" && state.word) {
@@ -448,6 +614,8 @@ export function sanitize(
     turnIndex: state.turnIndex,
     turnsPerRound: state.order.length,
     drawerId: state.drawerId,
+    // rooms created before giver mode existed have no such field
+    giverId: state.giverId ?? null,
     order: state.order,
     mask,
     wordLen:
@@ -458,18 +626,33 @@ export function sanitize(
     serverNow: now,
     guessedIds: Object.keys(state.guessed),
     theme: state.customWords?.theme ?? null,
+    themePacks: state.settings.themePacks ?? null,
+    wordSalt: state.wordSalt,
+    wordCursor: state.wordCursor,
+    waiting:
+      state.phase !== "lobby" &&
+      state.phase !== "gameover" &&
+      state.players.filter((p) => p.connected).length < 2,
     lastTurn:
       state.phase === "reveal" || state.phase === "gameover"
         ? state.lastTurn
         : null,
+    // the giver has known the word since they set it, so hiding it from them
+    // would only mean they cannot follow their own turn
     yourWord:
-      (isDrawer || hasGuessed) && state.phase === "drawing"
+      (isDrawer || isGiver || hasGuessed) && state.phase === "drawing"
         ? state.word
         : undefined,
+    // in giver mode the shortlist belongs to the giver, and the drawer must
+    // not see it — three words containing the answer is most of the answer
     yourChoices:
-      isDrawer && state.phase === "choosing" ? state.wordChoices : undefined,
+      (state.giverId ? isGiver : isDrawer) && state.phase === "choosing"
+        ? state.wordChoices
+        : undefined,
     yourChoiceTiers:
-      isDrawer && state.phase === "choosing" ? state.wordChoiceTiers : undefined,
+      (state.giverId ? isGiver : isDrawer) && state.phase === "choosing"
+        ? state.wordChoiceTiers
+        : undefined,
     yourHints: mePlayer ? mePlayer.hints ?? 1 : undefined,
     yourHintProgress: mePlayer ? mePlayer.hintStreak ?? 0 : undefined,
   };

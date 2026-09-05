@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, memo } from "react";
 import { ChatMsg } from "@/lib/types";
 import { PlayerAvatar } from "./avatars";
 import { IconCheck } from "./icons";
@@ -17,7 +17,7 @@ interface Cloud extends ChatMsg {
 const LIFE = 4200;
 const MAX = 6;
 
-export default function GuessClouds({
+function GuessClouds({
   messages,
   className,
 }: {
@@ -59,7 +59,7 @@ export default function GuessClouds({
       {clouds.map((c) => (
         <div
           key={c.id}
-          className={`dd-cloud w-fit max-w-full shrink-0 rounded-2xl rounded-bl-md border-2 px-2.5 py-1 text-sm shadow-doodle ${
+          className={`dd-cloud w-fit max-w-full shrink-0 rounded-2xl rounded-bl-md border-2 px-2.5 py-1 text-xs shadow-doodle ${
             c.kind === "correct"
               ? "border-green-600 bg-green-50 font-bold text-green-800"
               : c.kind === "system"
@@ -88,3 +88,5 @@ export default function GuessClouds({
     </div>
   );
 }
+
+export default memo(GuessClouds);

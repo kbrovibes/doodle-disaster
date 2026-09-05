@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, memo } from "react";
 import { ChatMsg } from "@/lib/types";
 import { IconParty, IconWhisper, PlayerAvatar } from "./icons";
 
@@ -13,7 +13,7 @@ interface Props {
   hideInput?: boolean;
 }
 
-export default function Chat({
+function Chat({
   messages,
   onSend,
   disabled,
@@ -40,7 +40,7 @@ export default function Chat({
     <div className="flex h-full min-h-0 flex-col rounded-2xl border-2 border-ink bg-white shadow-doodle">
       <div
         ref={listRef}
-        className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2 text-sm"
+        className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2 text-xs"
       >
         {messages.slice(-120).map((m) => (
           <div key={m.id} className="leading-snug break-words">
@@ -79,10 +79,12 @@ export default function Chat({
           autoComplete="off"
           autoCorrect="off"
           autoCapitalize="off"
-          className="w-full rounded-xl border-2 border-ink/20 bg-paper px-3 py-2 text-sm outline-none focus:border-ink disabled:opacity-50"
+          className="w-full rounded-xl border-2 border-ink/20 bg-paper px-3 py-2 text-xs outline-none focus:border-ink disabled:opacity-50"
         />
       </form>
       )}
     </div>
   );
 }
+
+export default memo(Chat);

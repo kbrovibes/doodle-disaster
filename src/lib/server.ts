@@ -58,6 +58,51 @@ export async function insertRoom(id: string, state: RoomState): Promise<boolean>
   return true;
 }
 
+/**
+ * Housekeeping, run opportunistically when someone makes a room.
+ *
+ * Abandoned games used to sit at "drawing" forever, which is how 65 rooms ended
+ * up permanently claiming to be live in everybody's Recent Games. Anything
+ * untouched for half a day is closed out; anything untouched for a fortnight
+ * goes, along with its drawings.
+ */
+export async function pruneStale(): Promise<void> {
+  try {
+    const cold = new Date(Date.now() - 12 * 3600_000).toISOString();
+    const ancient = new Date(Date.now() - 14 * 86400_000).toISOString();
+
+    const { data: dead } = await db
+      .from("doodle_rooms")
+      .select("id")
+      .lt("updated_at", ancient)
+      .limit(50);
+    const ids = (dead ?? []).map((r) => r.id as string);
+    if (ids.length) {
+      await db.from("doodle_shots").delete().in("room_id", ids);
+      await db.from("doodle_rooms").delete().in("id", ids);
+    }
+
+    const { data: stuck } = await db
+      .from("doodle_rooms")
+      .select("id, state, version")
+      .lt("updated_at", cold)
+      .limit(50);
+    for (const row of stuck ?? []) {
+      const state = row.state as RoomState;
+      if (state.phase === "gameover") continue;
+      state.phase = "gameover";
+      state.drawerId = null;
+      await db
+        .from("doodle_rooms")
+        .update({ state, version: (row.version as number) + 1 })
+        .eq("id", row.id)
+        .eq("version", row.version);
+    }
+  } catch {
+    // housekeeping must never break the request that triggered it
+  }
+}
+
 /** Push sanitized (spectator-view) state to everyone in the room channel. */
 export async function broadcastState(roomId: string, state: RoomState) {
   const now = Date.now();

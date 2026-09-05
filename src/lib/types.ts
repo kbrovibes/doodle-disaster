@@ -15,7 +15,15 @@ export interface Player {
 export interface Settings {
   rounds: number; // full cycles through all players
   drawSeconds: number;
-  difficulty: "easy" | "medium" | "hard";
+  difficulty: "kids" | "medium" | "hard" | "ultra";
+  /** keys of the predefined theme packs in play; empty = the whole bank */
+  themePacks?: string[] | null;
+  /**
+   * Where the drawer's word comes from. "bank" is the classic game: the
+   * drawer picks one of three off the deck. "giver" hands the choice to
+   * another player each turn — see giverFor() in engine.ts.
+   */
+  wordSource?: "bank" | "giver";
 }
 
 /** Full server-side state, stored in Postgres. Never sent raw to clients. */
@@ -23,12 +31,20 @@ export interface RoomState {
   phase: Phase;
   players: Player[];
   hostId: string;
+  /** whoever made the room — they get the crown back when they return */
+  founderId?: string;
   settings: Settings;
   order: string[]; // player ids in draw order for current game
   round: number; // 1-based
   turnIndex: number; // index into order
   drawerId: string | null;
-  wordChoices: string[]; // secret: only for drawer
+  /**
+   * The player setting this turn's word, in "giver" mode. Null whenever the
+   * drawer picks for themselves — a bot drawing, too few players, nobody
+   * eligible — so every read of it doubles as "are we in giver mode *now*".
+   */
+  giverId: string | null;
+  wordChoices: string[]; // secret: only for whoever is picking
   wordChoiceTiers?: string[];
   word: string | null; // secret
   phaseEndsAt: number; // epoch ms
@@ -36,6 +52,11 @@ export interface RoomState {
   personalHints?: Record<string, number[]>; // playerId -> extra revealed letter indices (this turn)
   drawerPoints: number;
   usedWords: string[];
+  /** every word we've *shown* on the pick screen, chosen or not */
+  offeredWords?: string[];
+  /** this group's shuffle of the bank + how far round the ring we are */
+  wordSalt?: number;
+  wordCursor?: Record<string, number>;
   customWords?: {
     theme: string;
     easy: string[];
@@ -45,6 +66,8 @@ export interface RoomState {
   lastTurn: {
     word: string;
     drawerId: string;
+    /** who set the word, when it wasn't the drawer */
+    giverId?: string | null;
     deltas: Record<string, number>;
     everyoneGuessed: boolean;
     skipped?: boolean;
@@ -62,6 +85,8 @@ export interface ClientState {
   turnIndex: number;
   turnsPerRound: number;
   drawerId: string | null;
+  /** public: everyone needs to know who is sitting this one out */
+  giverId: string | null;
   order: string[]; // public draw order (for "next to draw" indicators)
   mask: string | null; // e.g. "___ _____" with hints filled in: "a__ _r___"
   wordLen: number[]; // word shape as segment lengths
@@ -69,6 +94,11 @@ export interface ClientState {
   serverNow: number;
   guessedIds: string[];
   theme?: string | null;
+  themePacks?: string[] | null;
+  wordSalt?: number;
+  wordCursor?: Record<string, number>;
+  /** too few players connected — the game is held open, not over */
+  waiting?: boolean;
   lastTurn: RoomState["lastTurn"];
   // private extras (only when requester is drawer)
   yourWord?: string | null;

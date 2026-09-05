@@ -1,4 +1,5 @@
 import { generateText } from "ai";
+import { visionModel } from "./ai";
 
 /**
  * Ask a vision model to guess the pictionary drawing.
@@ -13,7 +14,7 @@ export async function visionGuess(
   const base64 = imageDataUrl.replace(/^data:image\/\w+;base64,/, "");
   try {
     const { text } = await generateText({
-      model: "anthropic/claude-haiku-4.5",
+      model: visionModel(),
       messages: [
         {
           role: "user",

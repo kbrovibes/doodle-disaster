@@ -79,12 +79,21 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     return bufRef.current;
   };
 
+  // Coalesced to one paint per frame. A busy turn delivers ~10 stroke messages
+  // a second on top of your own drawing, and each one used to force a full
+  // scaled drawImage synchronously — main-thread time that everything else
+  // (not least the keyboard) had to wait behind.
+  const blitRaf = useRef(0);
   const blit = useCallback(() => {
-    const disp = canvasRef.current;
-    if (!disp) return;
-    const g = disp.getContext("2d")!;
-    g.imageSmoothingEnabled = true;
-    g.drawImage(buf(), 0, 0, disp.width, disp.height);
+    if (blitRaf.current) return;
+    blitRaf.current = requestAnimationFrame(() => {
+      blitRaf.current = 0;
+      const disp = canvasRef.current;
+      if (!disp) return;
+      const g = disp.getContext("2d")!;
+      g.imageSmoothingEnabled = true;
+      g.drawImage(buf(), 0, 0, disp.width, disp.height);
+    });
   }, []);
 
   // fit the largest 4:3 box inside the available space (width AND height),
@@ -171,8 +180,10 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     const fg = parseInt(hex.slice(2, 4), 16);
     const fb = parseInt(hex.slice(4, 6), 16);
     if (Math.abs(tr - fr) + Math.abs(tg - fg) + Math.abs(tb - fb) < 12) return;
+    // tight tolerance on purpose: a generous one seeps through the soft
+    // anti-aliased edge of a stroke and floods the whole board
     const match = (i: number) =>
-      Math.abs(d[i] - tr) + Math.abs(d[i + 1] - tg) + Math.abs(d[i + 2] - tb) < 90;
+      Math.abs(d[i] - tr) + Math.abs(d[i + 1] - tg) + Math.abs(d[i + 2] - tb) < 34;
     const stack = [px + py * VW];
     const seen = new Uint8Array(VW * VH);
     while (stack.length) {
@@ -403,7 +414,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
   }, [canDraw, channel]);
 
   return (
-    <div className="dd-nosel flex h-full min-h-0 flex-col gap-2">
+    <div className="dd-nosel flex h-full min-h-0 w-full flex-col gap-2">
       <div
         ref={outerRef}
         className="relative flex min-h-0 flex-1 items-center justify-center"
@@ -454,7 +465,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
                 aria-label={`brush ${s}`}
                 onClick={() => setSize(s)}
                 className={`flex h-9 w-9 items-center justify-center rounded-lg border-2 ${
-                  size === s ? "border-ink bg-paper" : "border-transparent"
+                  size === s ? "border-ink bg-sun" : "border-transparent"
                 }`}
               >
                 <span
@@ -493,7 +504,7 @@ function ToolBtn({
       aria-label={label}
       onClick={onClick}
       className={`flex h-9 w-9 items-center justify-center rounded-lg border-2 text-lg transition-transform active:scale-90 ${
-        active ? "border-ink bg-paper" : "border-transparent hover:bg-paper"
+        active ? "border-ink bg-sun" : "border-transparent hover:bg-well"
       }`}
     >
       {children}

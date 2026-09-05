@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>How DoodleDisaster works — architecture</title>
+<meta name="description" content="An interactive walkthrough of DoodleDisaster: realtime drawing over WebSockets, server-authoritative scoring, and how a party game keeps a secret on a mirrored TV." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#fbfaf7; --panel:#fff; --ink:#16171b; --muted:#5d6472; --faint:#98a0b0;
+    --line:#e6e4dd; --accent:#ff5c39; --accent2:#2d6bff; --good:#0f9d58; --warn:#f0a202;
+    --code:#f4f2ec; --r:14px;
+  }
+  *,*::before,*::after{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:400 16px/1.6 Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  a{color:var(--accent2)}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 22px 110px}
+
+  header.hero{padding:66px 0 32px;border-bottom:1px solid var(--line);margin-bottom:8px}
+  .kicker{font:700 12px/1 "JetBrains Mono",monospace;letter-spacing:.18em;color:var(--accent);text-transform:uppercase}
+  h1{font:800 clamp(32px,5.4vw,52px)/1.06 "Bricolage Grotesque",Inter,sans-serif;letter-spacing:-.03em;margin:14px 0 14px}
+  .sub{font-size:19px;color:var(--muted);max-width:660px;margin:0}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+  .chip{font:600 12.5px/1 Inter,sans-serif;padding:7px 12px;border-radius:999px;background:#fff;border:1px solid var(--line);color:#41465a}
+  .chip b{color:var(--ink)}
+
+  h2{font:800 27px/1.2 "Bricolage Grotesque",Inter,sans-serif;letter-spacing:-.02em;margin:56px 0 6px}
+  h3{font:700 17px/1.3 Inter,sans-serif;margin:26px 0 6px}
+  p{margin:0 0 14px;color:#33383f}
+  .lead{color:var(--muted);margin-bottom:22px;max-width:720px}
+  code{font:600 13.5px/1 "JetBrains Mono",monospace;background:var(--code);padding:2px 6px;border-radius:5px}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:20px}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+  .note{border-left:3px solid var(--warn);background:#fffaf0;padding:12px 16px;border-radius:0 10px 10px 0;margin:16px 0;font-size:14.5px;color:#5a4a24}
+  .note b{color:#3d3216}
+
+  /* ---- interactive diagram ---- */
+  .stage{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:0;overflow:hidden;margin-top:18px}
+  .flowbar{display:flex;flex-wrap:wrap;gap:6px;padding:12px;border-bottom:1px solid var(--line);background:#fcfbf8}
+  .fbtn{font:700 13px/1 Inter,sans-serif;padding:9px 13px;border-radius:9px;border:1px solid var(--line);background:#fff;color:var(--muted);cursor:pointer}
+  .fbtn.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .diagram{padding:18px 14px 6px}
+  svg#map{width:100%;height:auto;display:block}
+  .node rect{transition:fill .25s, stroke .25s}
+  .node text{font:600 11px/1 Inter,sans-serif;fill:#2a2f38}
+  .node .sm{font-size:9px;fill:#7b8496}
+  .edge{stroke:#c9cdd6;stroke-width:2;fill:none;transition:stroke .25s, stroke-width .25s, opacity .25s}
+  .edge.hot{stroke:var(--accent);stroke-width:3.4}
+  .node.hot rect{fill:#fff2ee;stroke:var(--accent)}
+  .node.dim{opacity:.32}
+  .edge.dim{opacity:.14}
+  .pulse{fill:var(--accent)}
+
+  .steps{border-top:1px solid var(--line);padding:14px 18px 18px;background:#fcfbf8}
+  .steprow{display:flex;gap:12px;align-items:flex-start;padding:9px 0;border-bottom:1px dashed #e9e7e0;cursor:pointer}
+  .steprow:last-child{border-bottom:0}
+  .steprow .i{flex:0 0 24px;height:24px;border-radius:999px;background:#eceaf3;color:#5d6472;font:700 12px/24px "JetBrains Mono",monospace;text-align:center}
+  .steprow.on .i{background:var(--accent);color:#fff}
+  .steprow .t{font-size:14px}
+  .steprow .t b{display:block;font-weight:700;margin-bottom:1px}
+  .steprow .t span{color:var(--muted);font-size:13px}
+  .steprow.on .t b{color:var(--accent)}
+  .playrow{display:flex;gap:8px;align-items:center;margin-top:12px}
+  .playbtn{font:700 13px/1 Inter;padding:9px 14px;border-radius:9px;border:1px solid var(--ink);background:var(--ink);color:#fff;cursor:pointer}
+  .hint{font-size:12.5px;color:var(--faint)}
+
+  table{width:100%;border-collapse:collapse;margin:10px 0 4px;font-size:14.5px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-weight:700;color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.05em}
+  td b{font-weight:700}
+
+  details.q{border:1px solid var(--line);border-radius:11px;background:#fff;padding:0;margin:10px 0;overflow:hidden}
+  details.q summary{cursor:pointer;list-style:none;padding:14px 16px;font-weight:700;font-size:15px;display:flex;justify-content:space-between;gap:12px}
+  details.q summary::-webkit-details-marker{display:none}
+  details.q summary::after{content:"+";color:var(--accent);font-weight:800}
+  details.q[open] summary::after{content:"−"}
+  details.q .body{padding:0 16px 16px;color:#3b414a;font-size:14.5px}
+
+  footer{margin-top:70px;padding-top:24px;border-top:1px solid var(--line);color:var(--faint);font-size:13.5px}
+  @media (max-width:640px){ .steprow .t span{display:none} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="kicker">System walkthrough</div>
+  <h1>How DoodleDisaster works</h1>
+  <p class="sub">A realtime multiplayer drawing game with no game server, no accounts and no bill — running entirely on a free Vercel project and a free Supabase project. Here is how the pieces fit, and which trade-offs paid for that.</p>
+  <div class="chips">
+    <span class="chip"><b>Next.js</b> App Router</span>
+    <span class="chip"><b>Supabase Realtime</b> WebSockets</span>
+    <span class="chip"><b>Postgres</b> single jsonb row per room</span>
+    <span class="chip"><b>Canvas 2D</b> + rAF batching</span>
+    <span class="chip"><b>Zero</b> server timers</span>
+  </div>
+</header>
+
+<h2>The shape of it</h2>
+<p class="lead">Three tiers, and the interesting decision is what <em>doesn't</em> go through the middle one. Pick a flow to trace it through the system — the diagram highlights the path, and you can step through it beat by beat.</p>
+
+<div class="stage">
+  <div class="flowbar" id="flowbar"></div>
+  <div class="diagram">
+    <svg id="map" viewBox="0 0 900 380" role="img" aria-label="Architecture diagram">
+      <!-- lanes -->
+      <text x="14" y="20" font-size="11" font-weight="700" fill="#98a0b0">BROWSERS</text>
+      <text x="360" y="20" font-size="11" font-weight="700" fill="#98a0b0">VERCEL (serverless)</text>
+      <text x="690" y="20" font-size="11" font-weight="700" fill="#98a0b0">SUPABASE</text>
+      <line x1="330" y1="30" x2="330" y2="370" stroke="#ecebe4" stroke-width="1"/>
+      <line x1="660" y1="30" x2="660" y2="370" stroke="#ecebe4" stroke-width="1"/>
+
+      <g class="node" id="n-drawer"><rect x="18" y="42" width="150" height="56" rx="11" fill="#fff" stroke="#dcdae2"/>
+        <text x="32" y="66">Drawer’s browser</text><text class="sm" x="32" y="82">Canvas · engine mirror</text></g>
+      <g class="node" id="n-guesser"><rect x="18" y="126" width="150" height="56" rx="11" fill="#fff" stroke="#dcdae2"/>
+        <text x="32" y="150">Guesser’s browser</text><text class="sm" x="32" y="166">replays strokes</text></g>
+      <g class="node" id="n-stage"><rect x="18" y="210" width="150" height="56" rx="11" fill="#fff" stroke="#dcdae2"/>
+        <text x="32" y="234">Party screen (TV)</text><text class="sm" x="32" y="250">owns clock + canvas</text></g>
+      <g class="node" id="n-remote"><rect x="18" y="294" width="150" height="56" rx="11" fill="#fff" stroke="#dcdae2"/>
+        <text x="32" y="318">Party phones</text><text class="sm" x="32" y="334">hold the word</text></g>
+
+      <g class="node" id="n-route"><rect x="352" y="84" width="160" height="60" rx="11" fill="#fff" stroke="#dcdae2"/>
+        <text x="366" y="108">Route handler</text><text class="sm" x="366" y="124">/api/rooms/[id]</text></g>
+      <g class="node" id="n-engine"><rect x="352" y="176" width="160" height="60" rx="11" fill="#fff" stroke="#dcdae2"/>
+        <text x="366" y="200">Pure engine</text><text class="sm" x="366" y="216">rules · scoring · sanitize</text></g>
+
+      <g class="node" id="n-pg"><rect x="690" y="84" width="176" height="60" rx="11" fill="#fff" stroke="#dcdae2"/>
+        <text x="704" y="108">Postgres</text><text class="sm" x="704" y="124">doodle_rooms · jsonb + version</text></g>
+      <g class="node" id="n-rt"><rect x="690" y="196" width="176" height="60" rx="11" fill="#fff" stroke="#dcdae2"/>
+        <text x="704" y="220">Realtime</text><text class="sm" x="704" y="236">broadcast channels (WS)</text></g>
+      <g class="node" id="n-shots"><rect x="690" y="290" width="176" height="52" rx="11" fill="#fff" stroke="#dcdae2"/>
+        <text x="704" y="312">doodle_shots</text><text class="sm" x="704" y="328">one jpeg per turn</text></g>
+
+      <!-- edges -->
+      <path class="edge" id="e-draw-rt"  d="M168 60 C 300 60, 560 150, 690 210"/>
+      <path class="edge" id="e-rt-guess" d="M690 226 C 520 250, 300 190, 168 154"/>
+      <path class="edge" id="e-guess-api" d="M168 140 C 250 130, 280 118, 352 114"/>
+      <path class="edge" id="e-api-engine" d="M432 144 L 432 176"/>
+      <path class="edge" id="e-api-pg"   d="M512 110 L 690 110"/>
+      <path class="edge" id="e-api-rt"   d="M512 128 C 600 150, 620 190, 690 214"/>
+      <path class="edge" id="e-rt-all"   d="M690 240 C 480 300, 300 200, 168 168"/>
+      <path class="edge" id="e-stage-rt" d="M168 232 C 380 232, 520 226, 690 226"/>
+      <path class="edge" id="e-remote-rt" d="M168 316 C 400 316, 560 262, 690 246"/>
+      <path class="edge" id="e-team"     d="M168 330 C 300 372, 60 372, 60 350"/>
+      <path class="edge" id="e-shots"    d="M168 78 C 420 60, 560 280, 690 306"/>
+      <circle id="dot" class="pulse" r="5" opacity="0"/>
+    </svg>
+  </div>
+  <div class="steps">
+    <div id="stepper"></div>
+    <div class="playrow">
+      <button class="playbtn" id="play">▶ Play the flow</button>
+      <span class="hint" id="whyline"></span>
+    </div>
+  </div>
+</div>
+
+<h2>Why there is no game server</h2>
+<p class="lead">The whole design falls out of one constraint: a free Vercel project gives you stateless functions that live for the length of a request. No sockets you own, no timers, no memory between calls. Three consequences:</p>
+
+<div class="grid2">
+  <div class="panel">
+    <h3 style="margin-top:0">Strokes never touch the server</h3>
+    <p>Ink goes browser → Supabase Realtime → browser. Points are quantised into a 1000×750 virtual space, batched every <code>100ms</code>, and applied on the far side with quadratic smoothing.</p>
+    <p style="margin:0"><b>Trade-off:</b> nothing to replay for a late joiner — so a newcomer broadcasts <code>sync_req</code> and the drawer answers with the full op-list.</p>
+  </div>
+  <div class="panel">
+    <h3 style="margin-top:0">State is one row, guarded by a version</h3>
+    <p>Every mutation is <code>load → mutate → save WHERE version = n</code>, retried up to four times. Two people guessing the same word in the same millisecond can't both win the points.</p>
+    <p style="margin:0"><b>Trade-off:</b> a write round-trip per action, so the UI updates optimistically and lets the authoritative state confirm.</p>
+  </div>
+  <div class="panel">
+    <h3 style="margin-top:0">Time is a client conspiracy</h3>
+    <p>Nothing on the server wakes up when a turn ends. Every client watches the clock and races to POST <code>advance</code>, staggered by their index so they don't stampede. The first one wins the version check; the rest no-op.</p>
+    <p style="margin:0"><b>Belt and braces:</b> a GET also heals a stuck room, and abandoned games are closed out opportunistically on room creation.</p>
+  </div>
+  <div class="panel">
+    <h3 style="margin-top:0">The word is never sent to a guesser</h3>
+    <p><code>sanitize()</code> builds a per-player view: the mask, who has solved it, your own hint count. The answer is only ever attached to the drawer's copy.</p>
+    <p style="margin:0"><b>Consequence:</b> guessing has to be a server call — the client physically cannot check the answer itself.</p>
+  </div>
+</div>
+
+<h2>Party mode: keeping a secret on a mirrored screen</h2>
+<p class="lead">Casting to a TV means there is no private surface. The fix is topological rather than visual — the word travels on channels the wrong devices are not subscribed to.</p>
+
+<div class="panel">
+  <table>
+    <tr><th>Channel</th><th>Subscribers</th><th>Carries</th></tr>
+    <tr><td><code>party:CODE</code></td><td>screen + every phone</td><td>roster, teams, scores, clock, commands. <b>Never a word.</b></td></tr>
+    <tr><td><code>party:CODE:tN</code></td><td>team N's phones only</td><td>the word that team is choosing</td></tr>
+  </table>
+  <p style="margin:14px 0 0">The screen subscribes to <b>no</b> team channel, so it cannot receive a word early even by accident — it learns it exactly once, in the <code>reveal</code> command, at the moment it is meant to go up on the telly. A phone subscribes only to its own team's channel and re-subscribes if the host moves it.</p>
+</div>
+
+<div class="note"><b>Why the screen owns the game.</b> Any number of phones can drive a party game, so every mutation is serialised on the one device guaranteed to be present and awake. Two people tapping “they got it” at the same instant still only scores once, because the second command arrives to find the phase already moved on.</div>
+
+<h2>Never dealing the same word twice</h2>
+<p class="lead">The original bug: every new room started its deck at position zero, so a second game with the same friends dealt <em>identical</em> words. Not bad luck — a guaranteed repeat.</p>
+<div class="panel">
+  <p>Each tier is shuffled once into a fixed ring using a per-group seed, and a <b>cursor walks it forward</b>. A word cannot come round again until every other word in that tier has been dealt. The cursor is carried between games on the players' own devices and adopted from whichever room they join, so a group keeps walking one long ring all night.</p>
+  <table>
+    <tr><th>Tier</th><th>Words</th><th>Turns before a repeat is possible</th></tr>
+    <tr><td>easy</td><td>1,400</td><td>1,400</td></tr>
+    <tr><td>medium</td><td>1,241</td><td>1,241</td></tr>
+    <tr><td>hard</td><td>1,217</td><td>~600 (two per turn)</td></tr>
+    <tr><td>ultra</td><td>1,258</td><td>~420 (three per turn)</td></tr>
+  </table>
+</div>
+
+<h2>Questions you'd probably ask</h2>
+
+<details class="q"><summary>Why Supabase Realtime rather than raw WebSockets?<span></span></summary>
+<div class="body">Vercel functions can't hold a socket open on the free tier, so something else has to own the connection. Supabase Realtime is a hosted Phoenix channel server: browsers connect directly to it, the app never proxies ink, and the server can still push into a room by POSTing to the broadcast endpoint. The alternative — a long-lived Node process — means a bill and a thing to babysit.</div></details>
+
+<details class="q"><summary>What happens when the drawer closes their laptop mid-turn?<span></span></summary>
+<div class="body">Their <code>leave</code> marks them disconnected; if they were drawing, the turn resolves. Host duties migrate to the next connected human, and the room remembers its founder so the crown returns when they come back. If everyone drops, the game <em>pauses</em> rather than ending — it sits in a holding state with an “end the game” button for the host, because a dropped signal shouldn't destroy a night.</div></details>
+
+<details class="q"><summary>How do bots draw without a server?<span></span></summary>
+<div class="body">The host's browser drives them. Each bot word maps to a hand-authored recipe in a 100×75 grid, then a humaniser adds tremor, minimum-jerk velocity, hesitation and the occasional “oops” stroke followed by an undo — fitted to about two thirds of the draw timer. It replays through exactly the same broadcast path a person's hand would use, so no other client can tell the difference.</div></details>
+
+<details class="q"><summary>Where do the drawings go?<span></span></summary>
+<div class="body">At the end of each turn the canvas is downscaled to a small jpeg and stored in <code>doodle_shots</code>, keyed by room and turn, so everyone sees the same end-of-night gallery including people who joined late. Each device also keeps its own copy so old games open instantly and work offline.</div></details>
+
+<details class="q"><summary>What does this cost to run?<span></span></summary>
+<div class="body">Nothing. A handful of daily players fit inside the Vercel hobby tier and the Supabase free tier with room to spare — the entire database is a few megabytes, most of it jpegs. The design constraints on this page are almost all downstream of choosing to stay inside those limits.</div></details>
+
+<footer>
+  <b>DoodleDisaster</b> · <a href="https://doodle-disaster.vercel.app">play it</a> ·
+  built as a weekend project for a small group of friends.
+</footer>
+</div>
+
+<script>
+const FLOWS = [
+  { key:"ink", label:"✏️ A stroke reaches everyone",
+    why:"Ink never touches Vercel or Postgres — that is what makes it feel instant.",
+    nodes:["n-drawer","n-rt","n-guesser","n-stage"], edges:["e-draw-rt","e-rt-guess"],
+    path:["e-draw-rt","e-rt-guess"],
+    steps:[
+      ["Pointer moves","Points collect in a ref, drawn to an offscreen buffer immediately"],
+      ["Batch every 100ms","Quantised to a 1000×750 space so every screen size agrees"],
+      ["Broadcast","channel.send over the open WebSocket — no HTTP, no database"],
+      ["Peers replay","applyStroke smooths and paints; blits are coalesced to one per frame"],
+    ]},
+  { key:"guess", label:"🎯 A guess is scored",
+    why:"The client cannot check the answer — it was never sent one.",
+    nodes:["n-guesser","n-route","n-engine","n-pg","n-rt","n-drawer"],
+    edges:["e-guess-api","e-api-engine","e-api-pg","e-api-rt","e-rt-all"],
+    path:["e-guess-api","e-api-engine","e-api-pg","e-api-rt","e-rt-all"],
+    steps:[
+      ["POST /api/rooms/[id]","type:'guess' — the only place the answer exists"],
+      ["Load row + version","withRoom() reads the single jsonb row for the room"],
+      ["Pure engine mutates","Scoring, hint streaks, whether the turn ends — no I/O in here"],
+      ["Save WHERE version = n","Loses the race? Reload and retry, up to four times"],
+      ["Broadcast sanitized state","Every player gets their own view; the word stays with the drawer"],
+    ]},
+  { key:"secret", label:"🤫 Party mode keeps the word",
+    why:"Secrecy is enforced by who is subscribed to what, not by hiding UI.",
+    nodes:["n-remote","n-rt","n-stage"], edges:["e-remote-rt","e-stage-rt","e-team"],
+    path:["e-team","e-remote-rt","e-stage-rt"],
+    steps:[
+      ["Team A huddles","Their phones talk on party:CODE:t0 — a channel nobody else joined"],
+      ["A word is agreed","It has still never left that team's devices"],
+      ["Screen is told 'locked'","The command carries no word; the TV genuinely does not know it"],
+      ["Drawer reads a phone","Physically, in the room — the oldest secure channel there is"],
+      ["Reveal","Only now does the word cross to party:CODE and onto the telly"],
+    ]},
+  { key:"tick", label:"⏱️ A turn ends with no server timer",
+    why:"Nothing on the server wakes up. The clients agree among themselves.",
+    nodes:["n-guesser","n-drawer","n-route","n-pg"], edges:["e-guess-api","e-api-pg","e-api-engine"],
+    path:["e-guess-api","e-api-engine","e-api-pg"],
+    steps:[
+      ["Everyone watches the clock","Each client holds a server-time offset measured on every fetch"],
+      ["Staggered race","Player index adds jitter so four browsers don't POST at once"],
+      ["First writer wins","The version check makes the losers harmless no-ops"],
+      ["Lazy healing","A plain GET on a stuck room advances it too, so it can't wedge"],
+    ]},
+];
+
+let cur = 0, step = -1, timer = null;
+const map = document.getElementById("map");
+const bar = document.getElementById("flowbar");
+const stepper = document.getElementById("stepper");
+const dot = document.getElementById("dot");
+
+bar.innerHTML = FLOWS.map((f,i)=>`<button class="fbtn${i===0?" on":""}" data-i="${i}">${f.label}</button>`).join("");
+bar.onclick = e => { const b=e.target.closest(".fbtn"); if(!b) return; select(+b.dataset.i); };
+
+function select(i){
+  cur=i; step=-1; stop();
+  [...bar.children].forEach((b,k)=>b.classList.toggle("on",k===i));
+  const f=FLOWS[i];
+  document.getElementById("whyline").textContent = f.why;
+  map.querySelectorAll(".node").forEach(n=>{
+    n.classList.toggle("dim", !f.nodes.includes(n.id));
+    n.classList.remove("hot");
+  });
+  map.querySelectorAll(".edge").forEach(e=>{
+    e.classList.toggle("dim", !f.edges.includes(e.id));
+    e.classList.remove("hot");
+  });
+  stepper.innerHTML = f.steps.map((s,k)=>
+    `<div class="steprow" data-k="${k}"><div class="i">${k+1}</div><div class="t"><b>${s[0]}</b><span>${s[1]}</span></div></div>`).join("");
+  stepper.onclick = ev => { const r=ev.target.closest(".steprow"); if(r) show(+r.dataset.k); };
+}
+
+function show(k){
+  step=k;
+  const f=FLOWS[cur];
+  [...stepper.children].forEach((r,i)=>r.classList.toggle("on",i===k));
+  map.querySelectorAll(".edge").forEach(e=>e.classList.remove("hot"));
+  map.querySelectorAll(".node").forEach(n=>n.classList.remove("hot"));
+  const id=f.path[Math.min(k,f.path.length-1)];
+  const edge=document.getElementById(id);
+  if(edge){ edge.classList.add("hot"); glide(edge); }
+  const nid=f.nodes[Math.min(k,f.nodes.length-1)];
+  document.getElementById(nid)?.classList.add("hot");
+}
+
+let raf=0;
+function glide(edge){
+  cancelAnimationFrame(raf);
+  const len=edge.getTotalLength(); const t0=performance.now();
+  dot.setAttribute("opacity","1");
+  (function run(now){
+    const p=Math.min(1,(now-t0)/900);
+    const pt=edge.getPointAtLength(len*p);
+    dot.setAttribute("cx",pt.x); dot.setAttribute("cy",pt.y);
+    if(p<1) raf=requestAnimationFrame(run); else dot.setAttribute("opacity","0");
+  })(t0);
+}
+
+const play=document.getElementById("play");
+function stop(){ clearInterval(timer); timer=null; play.textContent="▶ Play the flow"; }
+play.onclick=()=>{
+  if(timer){ stop(); return; }
+  play.textContent="❚❚ Pause";
+  let k = (step+1) % FLOWS[cur].steps.length;
+  show(k);
+  timer=setInterval(()=>{
+    k=(k+1)%FLOWS[cur].steps.length;
+    show(k);
+    if(k===FLOWS[cur].steps.length-1){ /* let it loop */ }
+  },1400);
+};
+
+select(0);
+</script>
+</body>
+</html>

@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DoodleDisaster — draw badly, guess wildly</title>
+<meta name="description" content="A free multiplayer draw-and-guess game for a group of friends. Online rooms, or party mode with one screen on the telly and everybody on their own phone." />
+<meta property="og:title" content="DoodleDisaster" />
+<meta property="og:description" content="Draw badly. Guess wildly. Blame the pen." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@600;800;900&family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --paper:#fff8ee; --ink:#241b12; --muted:#8a7b6b; --faint:#b9aa98;
+    --surface:#fff; --well:#fdf0dc; --coral:#cf3f1c; --coral-bright:#ff5c39;
+    --sun:#ffc93c; --mint:#cbf3d8;
+    --lift:0 10px 22px -12px rgba(80,45,20,.34);
+    --lift-sm:0 5px 12px -6px rgba(80,45,20,.32);
+    --lift-lg:0 16px 34px -18px rgba(80,45,20,.4);
+  }
+  *,*::before,*::after{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+       font:400 16px/1.6 Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased;
+       background-image:radial-gradient(rgba(120,80,40,.055) 1px,transparent 1px);background-size:22px 22px}
+  a{color:var(--coral)}
+  .wrap{max-width:980px;margin:0 auto;padding:0 22px 90px}
+
+  header{text-align:center;padding:70px 0 12px}
+  .logo{font-size:56px;line-height:1}
+  h1{font:900 clamp(38px,8vw,68px)/1 Outfit,Inter,sans-serif;letter-spacing:-.035em;margin:14px 0 10px}
+  h1 em{font-style:normal;color:var(--coral-bright)}
+  .tag{font-size:19px;color:var(--muted);margin:0}
+  .cta-row{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:26px}
+  .btn{display:inline-flex;align-items:center;gap:8px;font:800 16px/1 Outfit,Inter,sans-serif;
+       padding:14px 22px;border-radius:16px;text-decoration:none;box-shadow:var(--lift);transition:transform .12s,box-shadow .12s}
+  .btn:hover{transform:translateY(-2px);box-shadow:var(--lift-lg)}
+  .btn.play{background:var(--coral);color:#fff}
+  .btn.ghost{background:var(--surface);color:var(--ink);box-shadow:var(--lift-sm)}
+
+  h2{font:800 30px/1.15 Outfit,Inter,sans-serif;letter-spacing:-.02em;margin:64px 0 8px}
+  .lead{color:var(--muted);margin:0 0 24px;max-width:660px}
+
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px}
+  .card{background:var(--surface);border-radius:22px;padding:22px;box-shadow:var(--lift-sm)}
+  .card .ic{font-size:28px;line-height:1}
+  .card h3{font:800 18px/1.25 Outfit,Inter,sans-serif;margin:12px 0 6px}
+  .card p{margin:0;color:#4a4238;font-size:14.5px}
+
+  .split{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:18px;align-items:start}
+  .mode{background:var(--surface);border-radius:24px;padding:24px;box-shadow:var(--lift)}
+  .mode .pill{display:inline-block;font:700 11px/1 Inter;letter-spacing:.1em;text-transform:uppercase;
+              padding:6px 11px;border-radius:999px;background:var(--well);color:var(--muted)}
+  .mode h3{font:900 24px/1.15 Outfit,Inter,sans-serif;margin:14px 0 8px}
+  .mode ol{margin:14px 0 0;padding-left:20px;color:#4a4238;font-size:14.5px}
+  .mode ol li{margin-bottom:7px}
+
+  .themes{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+  .th{display:inline-flex;align-items:center;gap:6px;background:var(--surface);border-radius:999px;
+      padding:9px 15px;font-size:14px;font-weight:700;box-shadow:var(--lift-sm)}
+  .th.mix{background:var(--sun)}
+
+  table{width:100%;border-collapse:collapse;background:var(--surface);border-radius:18px;overflow:hidden;box-shadow:var(--lift-sm);font-size:14.5px}
+  td,th{text-align:left;padding:13px 16px;border-bottom:1px solid rgba(36,27,18,.07)}
+  tr:last-child td{border-bottom:0}
+  th{font:700 12px/1 Inter;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);background:var(--well)}
+  td b{font-weight:700}
+
+  .quiet{background:var(--well);border-radius:22px;padding:24px;margin-top:22px;color:#4a4238;font-size:14.5px}
+  .quiet b{color:var(--ink)}
+
+  footer{margin-top:72px;text-align:center;color:var(--faint);font-size:13.5px}
+  footer a{color:var(--muted)}
+  @media(max-width:520px){ header{padding-top:44px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="logo">🎨</div>
+  <h1>Doodle<em>Disaster</em></h1>
+  <p class="tag">Draw badly. Guess wildly. Blame the pen.</p>
+  <div class="cta-row">
+    <a class="btn play" href="https://doodle-disaster.vercel.app">Play now →</a>
+    <a class="btn ghost" href="https://doodle-disaster.vercel.app/architecture.html">How it works</a>
+  </div>
+</header>
+
+<h2>Two ways to play</h2>
+<p class="lead">One is for friends scattered across time zones. The other is for everyone squeezed onto the same sofa.</p>
+
+<div class="split">
+  <div class="mode">
+    <span class="pill">🔗 Online</span>
+    <h3>Everyone on their own screen</h3>
+    <ol>
+      <li>Make a game and you get a <b>four-character code</b> — read it out, no link needed.</li>
+      <li>Friends open the site, type the code and a name. That's the whole sign-up.</li>
+      <li>Take turns drawing while everybody else races to guess. Early guesses score more than fast typing.</li>
+      <li>Short of people? Add up to three <b>bots</b> that draw with a genuinely human wobble.</li>
+    </ol>
+  </div>
+  <div class="mode">
+    <span class="pill">📺 Party mode</span>
+    <h3>One telly, a phone each</h3>
+    <ol>
+      <li>Cast one device to the TV — that's the board and the clock.</li>
+      <li>Everybody joins from their own phone; the host sorts them into <b>two to four teams</b>.</li>
+      <li>One team huddles over their phones and agrees a word. <b>It only ever appears on their team's phones.</b></li>
+      <li>They call someone over from the other team, show them the phone, and that person draws while their team shouts.</li>
+    </ol>
+  </div>
+</div>
+
+<h2>What's in the box</h2>
+<div class="cards">
+  <div class="card"><div class="ic">🎯</div><h3>Words that don't repeat</h3>
+    <p>Around 5,000 words across four difficulties, dealt off a circular deck that carries between games — so a second game tonight can't hand you the same words as the first.</p></div>
+  <div class="card"><div class="ic">🤖</div><h3>Bots that draw like people</h3>
+    <p>Hand-authored doodles replayed with tremor, hesitation and the occasional mistake they then undo. Nobody can tell which player is the robot.</p></div>
+  <div class="card"><div class="ic">💡</div><h3>Hints you have to earn</h3>
+    <p>One personal hint reveals an extra letter — only for you. Guess five words correctly and you earn another.</p></div>
+  <div class="card"><div class="ic">🖼️</div><h3>A scrapbook of the night</h3>
+    <p>Every drawing is kept. Swipe back through the whole evening's masterpieces with the final scores, long after the game ended.</p></div>
+  <div class="card"><div class="ic">⌨️</div><h3>Your keyboard, your choice</h3>
+    <p>Type on your phone's own keyboard without the board scrolling away, or use the built-in pad with hold-to-delete.</p></div>
+  <div class="card"><div class="ic">🚪</div><h3>Drop out, walk back in</h3>
+    <p>Lost signal doesn't end the night. The game holds open, your seat is kept, and whoever made the room gets the crown back.</p></div>
+</div>
+
+<h2>Themes for this crowd</h2>
+<p class="lead">Pick one, pick five, or throw the lot in. Each pack is 100+ words, and a theme takes over the entire word bank for the night.</p>
+<div class="themes">
+  <span class="th">🎬 Bollywood</span>
+  <span class="th">🥥 Malayalam Movies</span>
+  <span class="th">⭐ Famous Indians</span>
+  <span class="th">🛕 Places in India</span>
+  <span class="th">🫖 Desi Life</span>
+  <span class="th">🏏 Cricket</span>
+  <span class="th">📺 90s India</span>
+  <span class="th">🍿 Movies (world)</span>
+  <span class="th mix">🎲 The Big Mix — all of it at once</span>
+</div>
+
+<h2>House rules</h2>
+<table>
+  <tr><th>Thing</th><th>How it works</th></tr>
+  <tr><td><b>Players</b></td><td>2 to 10, at least one of them human. Bots fill the gaps.</td></tr>
+  <tr><td><b>Rounds</b></td><td>3, 5 or 10 — one full cycle through everybody is a round.</td></tr>
+  <tr><td><b>Draw time</b></td><td>60, 75 or 120 seconds, changeable mid-game.</td></tr>
+  <tr><td><b>Difficulty</b></td><td>Easy for kids · Medium for casual · Hard for sweaty · Ultra for no mercy.</td></tr>
+  <tr><td><b>Scoring</b></td><td>100 for the first correct guess, then 85, 70, 60, 55, 50 — plus up to 25 for time left. The drawer earns 35 per solver.</td></tr>
+  <tr><td><b>Letters</b></td><td>Never write the word on the board. That's the one rule.</td></tr>
+</table>
+
+<div class="quiet">
+  <b>No accounts, no ads, no app to install.</b> Type a name and you're playing. Nothing is tracked, nothing is sold, and the whole thing runs inside the free tiers of Vercel and Supabase — which is exactly why it's built the way it is. If you're curious how a realtime multiplayer game works with no game server at all, <a href="https://doodle-disaster.vercel.app/architecture.html">there's a walkthrough</a>.
+</div>
+
+<footer>
+  Built as a weekend project for a small circle of friends ·
+  <a href="https://doodle-disaster.vercel.app">doodle-disaster.vercel.app</a>
+</footer>
+</div>
+</body>
+</html>

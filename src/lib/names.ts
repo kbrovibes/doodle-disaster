@@ -21,13 +21,28 @@ const TAIL = [
   "karaoke", "jamboree", "uprising", "summit", "wiggle", "boogie",
 ] as const;
 
+/**
+ * A short code you can read out across a room. No O/0/I/1 so nobody has to
+ * ask "is that a one or an el". Stored lowercase (routes lowercase the id);
+ * always SHOWN uppercase via roomCode().
+ */
+const CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+
 export function goofyRoomId(): string {
-  const pick = <T,>(a: readonly T[]) => a[Math.floor(Math.random() * a.length)];
-  return `${pick(ADJ)}-${pick(NOUN)}-${pick(TAIL)}`;
+  let s = "";
+  const bytes = new Uint8Array(4);
+  crypto.getRandomValues(bytes);
+  for (const b of bytes) s += CODE_ALPHABET[b % CODE_ALPHABET.length];
+  return s;
+}
+
+/** How a room id is shown to humans. */
+export function roomCode(id: string): string {
+  return id.length <= 6 ? id.toUpperCase() : id;
 }
 
 // tokens rendered by <PlayerAvatar> as proprietary doodle-critter glyphs
-export const AVATARS = Array.from({ length: 20 }, (_, i) => `a${i}`);
+export const AVATARS = Array.from({ length: 40 }, (_, i) => `a${i}`);
 
 export function pickAvatar(taken: string[]): string {
   const free = AVATARS.filter((a) => !taken.includes(a));
