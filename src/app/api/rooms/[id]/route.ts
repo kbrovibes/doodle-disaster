@@ -12,6 +12,7 @@ import {
   markConnected,
   playAgain,
   removeBot,
+  renamePlayer,
   sanitize,
   skipTurn,
   startGame,
@@ -399,6 +400,19 @@ export async function POST(req: NextRequest, { params }: Params) {
         const { state } = await withRoom(id, (s, now) => {
           if (s.hostId !== playerId) throw new RoomError("Only the host can skip");
           skipTurn(s, now);
+        });
+        return NextResponse.json({
+          state: sanitize(state, playerId, Date.now()),
+        });
+      }
+      case "rename": {
+        const { state } = await withRoom(id, (s) => {
+          renamePlayer(
+            s,
+            playerId,
+            String(body.name ?? ""),
+            String(body.avatar ?? "") || undefined
+          );
         });
         return NextResponse.json({
           state: sanitize(state, playerId, Date.now()),

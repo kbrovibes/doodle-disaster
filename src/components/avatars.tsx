@@ -237,91 +237,154 @@ function Hairdo({ f }: { f: Face }) {
   }
 }
 
+/**
+ * Where a face's parts live, in one place.
+ *
+ * Cuteness is mostly geometry, and the old cast got the geometry of an adult:
+ * 1.3px pupils sitting above the middle of the head. The baby schema is the
+ * opposite — big glossy eyes, set low and wide, with a small mouth tucked
+ * close underneath. Everything that hangs off a face (glasses, a monocle, an
+ * eyepatch) reads from here, so a decoration can never drift off the eye it
+ * belongs to.
+ */
+const GEO = (f: Face) => ({
+  cx: 16,
+  headY: f.kid ? 17.9 : 17.6,
+  headRx: f.kid ? 10.3 : 10.0,
+  headRy: f.kid ? 10.4 : 10.5,
+  earY: f.kid ? 19.0 : 18.8,
+  eyeL: f.kid ? 11.4 : 11.7,
+  eyeR: f.kid ? 20.6 : 20.3,
+  eyeY: f.kid ? 18.6 : 18.2,
+  /** white of the eye */
+  iris: f.kid ? 3.25 : 3.0,
+  pupil: f.kid ? 1.95 : 1.8,
+  mouthY: f.kid ? 23.2 : 22.9,
+  blushY: f.kid ? 21.8 : 21.4,
+});
+
+/**
+ * One eye: white, a big pupil sitting slightly low in it, and the highlight
+ * that does most of the work. Take the highlight away and the same face reads
+ * as a doll rather than a child.
+ */
+function Eye({
+  x,
+  y,
+  iris,
+  pupil,
+  look = 0,
+}: {
+  x: number;
+  y: number;
+  iris: number;
+  pupil: number;
+  /** shifts the pupil sideways, for a squint or a cross-eyed stare */
+  look?: number;
+}) {
+  const px = x + look;
+  return (
+    <>
+      <circle cx={x} cy={y} r={iris} fill="#fff" stroke={INK} strokeWidth={1.35} />
+      <circle cx={px} cy={y + iris * 0.13} r={pupil} fill={INK} />
+      <circle
+        cx={px - pupil * 0.4}
+        cy={y + iris * 0.13 - pupil * 0.5}
+        r={pupil * 0.42}
+        fill="#fff"
+      />
+    </>
+  );
+}
+
 function Eyes({ f }: { f: Face }) {
-  const lx = 12.3;
-  const rx = 19.7;
-  const y = f.kid ? 17.2 : 16.6;
-  const r = f.kid ? 1.55 : 1.3;
+  const g = GEO(f);
+  const { eyeL: lx, eyeR: rx, eyeY: y, iris, pupil } = g;
+  const pair = (look = 0, scale = 1) => (
+    <>
+      <Eye x={lx} y={y} iris={iris * scale} pupil={pupil * scale} look={look} />
+      <Eye x={rx} y={y} iris={iris * scale} pupil={pupil * scale} look={-look} />
+    </>
+  );
+
   switch (f.expr) {
     case "laugh":
+      // squeezed shut — two happy arches, the one place there is no pupil
       return (
-        <g stroke={INK} strokeWidth={1.6} fill="none" strokeLinecap="round">
-          <path d={`M${lx - 1.7} ${y + 0.7} q1.7 -2.4 3.4 0`} />
-          <path d={`M${rx - 1.7} ${y + 0.7} q1.7 -2.4 3.4 0`} />
+        <g stroke={INK} strokeWidth={2} fill="none" strokeLinecap="round">
+          <path d={`M${lx - 2.6} ${y + 1.2} q2.6 -3.6 5.2 0`} />
+          <path d={`M${rx - 2.6} ${y + 1.2} q2.6 -3.6 5.2 0`} />
         </g>
       );
     case "wink":
       return (
         <>
-          <circle cx={lx} cy={y} r={r} fill={INK} />
-          <path d={`M${rx - 1.8} ${y} h3.6`} stroke={INK} strokeWidth={1.7} strokeLinecap="round" />
+          <Eye x={lx} y={y} iris={iris} pupil={pupil} />
+          <path
+            d={`M${rx - 2.6} ${y + 0.6} q2.6 -3.2 5.2 0`}
+            stroke={INK}
+            strokeWidth={2}
+            fill="none"
+            strokeLinecap="round"
+          />
         </>
       );
     case "shock":
     case "surprised":
-      return (
-        <>
-          <circle cx={lx} cy={y} r="2.9" fill="#fff" stroke={INK} strokeWidth={1.4} />
-          <circle cx={rx} cy={y} r="2.9" fill="#fff" stroke={INK} strokeWidth={1.4} />
-          <circle cx={lx + 0.3} cy={y + 0.4} r="1.25" fill={INK} />
-          <circle cx={rx + 0.3} cy={y + 0.4} r="1.25" fill={INK} />
-        </>
-      );
+      return pair(0, 1.16);
     case "cool":
       return (
         <>
-          <path d={`M7.4 ${y - 2.2} H24.6`} stroke={INK} strokeWidth={1.5} strokeLinecap="round" />
-          <rect x="8" y={y - 2.4} width="7.2" height="4.8" rx="1.8" fill={INK} />
-          <rect x="16.8" y={y - 2.4} width="7.2" height="4.8" rx="1.8" fill={INK} />
+          <path
+            d={`M${lx - 4.6} ${y - 2.6} H${rx + 4.6}`}
+            stroke={INK}
+            strokeWidth={1.6}
+            strokeLinecap="round"
+          />
+          <rect x={lx - 4.4} y={y - 2.9} width="8.4" height="5.6" rx="2.4" fill={INK} />
+          <rect x={rx - 4.0} y={y - 2.9} width="8.4" height="5.6" rx="2.4" fill={INK} />
         </>
       );
     case "derp":
+      // deliberately mismatched: one wide, one small and lower
       return (
         <>
-          <circle cx={lx - 0.3} cy={y - 0.6} r="2.7" fill="#fff" stroke={INK} strokeWidth={1.3} />
-          <circle cx={rx} cy={y + 0.5} r="1.7" fill="#fff" stroke={INK} strokeWidth={1.3} />
-          <circle cx={lx} cy={y - 0.3} r="1.2" fill={INK} />
-          <circle cx={rx - 0.4} cy={y + 0.6} r="0.85" fill={INK} />
+          <Eye x={lx - 0.2} y={y - 0.7} iris={iris * 1.1} pupil={pupil * 0.9} look={0.5} />
+          <Eye x={rx} y={y + 0.7} iris={iris * 0.78} pupil={pupil * 0.72} look={-0.4} />
         </>
       );
     case "crosseyed":
-      return (
-        <>
-          <circle cx={lx} cy={y} r="2.7" fill="#fff" stroke={INK} strokeWidth={1.3} />
-          <circle cx={rx} cy={y} r="2.7" fill="#fff" stroke={INK} strokeWidth={1.3} />
-          <circle cx={lx + 1.5} cy={y + 0.5} r="1.15" fill={INK} />
-          <circle cx={rx - 1.5} cy={y + 0.5} r="1.15" fill={INK} />
-        </>
-      );
+      return pair(1.15);
     case "shout":
       return (
-        <g stroke={INK} strokeWidth={1.6} fill="none" strokeLinecap="round">
-          <path d={`M${lx - 1.8} ${y - 2.6} q1.8 -1.2 3.6 0.4`} />
-          <path d={`M${rx + 1.8} ${y - 2.6} q-1.8 -1.2 -3.6 0.4`} />
-          <circle cx={lx} cy={y + 0.4} r="1.4" fill={INK} />
-          <circle cx={rx} cy={y + 0.4} r="1.4" fill={INK} />
-        </g>
+        <>
+          {pair(0, 0.92)}
+          <g stroke={INK} strokeWidth={1.7} fill="none" strokeLinecap="round">
+            <path d={`M${lx - 3.4} ${y - 4.6} q2.4 -1.6 4.8 0.4`} />
+            <path d={`M${rx + 3.4} ${y - 4.6} q-2.4 -1.6 -4.8 0.4`} />
+          </g>
+        </>
       );
     case "smirk":
       return (
         <>
-          <circle cx={lx} cy={y} r={r} fill={INK} />
-          <circle cx={rx} cy={y} r={r} fill={INK} />
-          <path d={`M${rx - 2.4} ${y - 3.4} q2.4 -1.4 4.6 0.4`} stroke={INK} strokeWidth={1.4} fill="none" strokeLinecap="round" />
+          {pair(0.5)}
+          <path
+            d={`M${rx - 3} ${y - 4.8} q3 -1.6 5.6 0.6`}
+            stroke={INK}
+            strokeWidth={1.5}
+            fill="none"
+            strokeLinecap="round"
+          />
         </>
       );
     default:
-      return (
-        <>
-          <circle cx={lx} cy={y} r={r} fill={INK} />
-          <circle cx={rx} cy={y} r={r} fill={INK} />
-        </>
-      );
+      return pair();
   }
 }
 
 function Mouth({ f }: { f: Face }) {
-  const y = f.kid ? 22.2 : 21.8;
+  const y = GEO(f).mouthY;
   const st = { stroke: INK, strokeWidth: 1.6, fill: "none", strokeLinecap: "round" as const };
   switch (f.expr) {
     case "laugh":
@@ -339,12 +402,12 @@ function Mouth({ f }: { f: Face }) {
         </>
       );
     case "shock":
-      return <ellipse cx="16" cy={y + 0.6} rx="2.4" ry="3.1" fill={INK} />;
+      return <ellipse cx="16" cy={y + 0.4} rx="2.1" ry="2.5" fill={INK} />;
     case "shout":
       return (
         <>
-          <ellipse cx="16" cy={y + 1} rx="3.6" ry="4.2" fill={INK} />
-          <path d={`M13.4 ${y + 3.4} q2.6 2 5.2 0`} stroke="#e86868" strokeWidth={2} fill="none" />
+          <ellipse cx="16" cy={y + 0.7} rx="3.1" ry="3.4" fill={INK} />
+          <path d={`M13.6 ${y + 2.5} q2.4 1.7 4.8 0`} stroke="#e86868" strokeWidth={1.8} fill="none" />
         </>
       );
     case "crosseyed":
@@ -390,6 +453,7 @@ export function PlayerAvatar({
     );
   }
   const f = CAST[Number(m[1]) % CAST.length];
+  const g = GEO(f);
   const hidesEars = ["long", "bob", "bangs", "pigtails"].includes(f.style);
   return (
     <svg
@@ -402,29 +466,33 @@ export function PlayerAvatar({
     >
       {!hidesEars && (
         <>
-          <circle cx="6.7" cy="18.4" r="2" fill={f.skin} stroke={INK} strokeWidth={1.4} />
-          <circle cx="25.3" cy="18.4" r="2" fill={f.skin} stroke={INK} strokeWidth={1.4} />
+          <circle cx={g.cx - g.headRx + 0.6} cy={g.earY} r="2.1" fill={f.skin} stroke={INK} strokeWidth={1.4} />
+          <circle cx={g.cx + g.headRx - 0.6} cy={g.earY} r="2.1" fill={f.skin} stroke={INK} strokeWidth={1.4} />
         </>
       )}
       <ellipse
         cx="16"
-        cy={f.kid ? 18 : 17.6}
-        rx={f.kid ? 9.9 : 9.5}
-        ry={f.kid ? 10.2 : 10.6}
+        cy={g.headY}
+        rx={g.headRx}
+        ry={g.headRy}
         fill={f.skin}
         stroke={INK}
         strokeWidth={1.7}
       />
       {f.beard && (
-        <path d="M6.8 18.6 Q7.6 29.4 16 29.4 Q24.4 29.4 25.2 18.6 Q22 24.6 16 24.6 Q10 24.6 6.8 18.6 Z" fill={f.hair} stroke={INK} strokeWidth={1.4} strokeLinejoin="round" />
+        <path
+          d={`M6.8 18.6 Q7.6 29.2 16 29.2 Q24.4 29.2 25.2 18.6 Q22 ${g.mouthY + 2.8} 16 ${g.mouthY + 2.8} Q10 ${g.mouthY + 2.8} 6.8 18.6 Z`}
+          fill={f.hair}
+          stroke={INK}
+          strokeWidth={1.4}
+          strokeLinejoin="round"
+        />
       )}
       <Hairdo f={f} />
-      {f.kid && (
-        <>
-          <circle cx="9.6" cy="20.8" r="1.7" fill="#e86868" opacity="0.4" />
-          <circle cx="22.4" cy="20.8" r="1.7" fill="#e86868" opacity="0.4" />
-        </>
-      )}
+      <g fill="#e86868" opacity={f.kid ? 0.42 : 0.26}>
+        <ellipse cx={g.eyeL - 2.6} cy={g.blushY} rx={f.kid ? 2.1 : 1.9} ry={f.kid ? 1.5 : 1.3} />
+        <ellipse cx={g.eyeR + 2.6} cy={g.blushY} rx={f.kid ? 2.1 : 1.9} ry={f.kid ? 1.5 : 1.3} />
+      </g>
       {f.freckles && (
         <g fill={INK} opacity="0.45">
           <circle cx="10.4" cy="20" r="0.5" />
@@ -436,43 +504,49 @@ export function PlayerAvatar({
       <Eyes f={f} />
       {f.glasses && (
         <g stroke={INK} strokeWidth={1.4} fill="none">
-          <circle cx="12.3" cy={f.kid ? 17.2 : 16.6} r="3.5" />
-          <circle cx="19.7" cy={f.kid ? 17.2 : 16.6} r="3.5" />
-          <path d={`M15.8 ${f.kid ? 17.2 : 16.6} h0.4`} />
+          <circle cx={g.eyeL} cy={g.eyeY} r={g.iris + 0.75} />
+          <circle cx={g.eyeR} cy={g.eyeY} r={g.iris + 0.75} />
+          <path d={`M${g.eyeL + g.iris + 0.75} ${g.eyeY} H${g.eyeR - g.iris - 0.75}`} />
         </g>
       )}
       <Mouth f={f} />
       {f.bignose && (
-        <ellipse cx="16" cy={f.kid ? 19.6 : 19.2} rx="2.6" ry="2.1" fill={f.skin} stroke={INK} strokeWidth={1.4} />
+        <ellipse cx={g.cx} cy={g.eyeY + 2.6} rx="2.6" ry="2.1" fill={f.skin} stroke={INK} strokeWidth={1.4} />
       )}
       {f.unibrow && (
         <path d="M9.4 13.4 q6.6 -2.2 13.2 0 q-6.6 1.2 -13.2 0 Z" fill={f.hair} stroke={INK} strokeWidth={1.2} strokeLinejoin="round" />
       )}
       {f.buckteeth && (
         <g stroke={INK} strokeWidth={1.1}>
-          <rect x="13.8" y={f.kid ? 22.6 : 22.2} width="2.1" height="3" rx="0.5" fill="#fff" />
-          <rect x="16.1" y={f.kid ? 22.6 : 22.2} width="2.1" height="3" rx="0.5" fill="#fff" />
+          <rect x="13.8" y={g.mouthY + 0.5} width="2.1" height="3" rx="0.5" fill="#fff" />
+          <rect x="16.1" y={g.mouthY + 0.5} width="2.1" height="3" rx="0.5" fill="#fff" />
         </g>
       )}
       {f.eyepatch && (
         <g>
-          <path d="M6.4 13.8 Q16 11.6 25.6 13.8" stroke={INK} strokeWidth={1.3} fill="none" />
-          <circle cx="19.7" cy={f.kid ? 17.2 : 16.6} r="3.4" fill={INK} />
+          <path d={`M6.4 ${g.eyeY - 4.2} Q16 ${g.eyeY - 6.4} 25.6 ${g.eyeY - 4.2}`} stroke={INK} strokeWidth={1.3} fill="none" />
+          <circle cx={g.eyeR} cy={g.eyeY} r={g.iris + 0.4} fill={INK} />
         </g>
       )}
       {f.monocle && (
         <g stroke={INK} strokeWidth={1.4} fill="none">
-          <circle cx="19.7" cy={f.kid ? 17.2 : 16.6} r="3.9" fill="rgba(255,255,255,0.35)" />
-          <path d="M22.4 19.4 q1.6 3.4 0.4 6" />
+          <circle cx={g.eyeR} cy={g.eyeY} r={g.iris + 0.95} fill="rgba(255,255,255,0.35)" />
+          <path d={`M${g.eyeR + 3} ${g.eyeY + 2.6} q1.6 3.4 0.4 6`} />
         </g>
       )}
       {f.mustache && (
-        <path d="M11.6 19.8 q4.4 -2.2 8.8 0 q-2.6 2.8 -4.4 0.6 q-1.8 2.2 -4.4 -0.6 Z" fill={f.hair} stroke={INK} strokeWidth={1.2} strokeLinejoin="round" />
+        <path
+          d={`M11.6 ${g.mouthY - 1.9} q4.4 -2.2 8.8 0 q-2.6 2.8 -4.4 0.6 q-1.8 2.2 -4.4 -0.6 Z`}
+          fill={f.hair}
+          stroke={INK}
+          strokeWidth={1.2}
+          strokeLinejoin="round"
+        />
       )}
       {f.blush && (
-        <g fill="#ff8a8a" opacity="0.55">
-          <ellipse cx="9.8" cy="20.4" rx="2.3" ry="1.5" />
-          <ellipse cx="22.2" cy="20.4" rx="2.3" ry="1.5" />
+        <g fill="#ff8a8a" opacity="0.5">
+          <ellipse cx={g.eyeL - 2.6} cy={g.blushY} rx="2.4" ry="1.6" />
+          <ellipse cx={g.eyeR + 2.6} cy={g.blushY} rx="2.4" ry="1.6" />
         </g>
       )}
       {f.browRaise && (

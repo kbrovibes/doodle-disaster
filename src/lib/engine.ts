@@ -518,6 +518,44 @@ export function kickPlayer(state: RoomState, targetId: string, now: number): voi
   }
 }
 
+/**
+ * Change your own name and face between games.
+ *
+ * Allowed in the lobby and on the results screen only: a name changing
+ * mid-turn would rewrite the guess feed everyone is reading, and "Play again"
+ * is exactly the moment somebody wants to stop being whatever they typed in a
+ * hurry twenty minutes ago. Everything else about the seat — score, turn
+ * order, hint tokens — is left alone.
+ */
+export function renamePlayer(
+  state: RoomState,
+  playerId: string,
+  rawName: string,
+  avatar?: string
+): void {
+  if (state.phase !== "lobby" && state.phase !== "gameover")
+    throw new GameError("Finish the round first");
+  const me = state.players.find((p) => p.id === playerId);
+  if (!me) throw new GameError("Unknown player");
+
+  const wanted = rawName.trim().slice(0, 20);
+  if (!wanted) throw new GameError("Names can't be empty");
+  // the same auto-suffix the join gate uses, so two Sams stay tellable apart
+  const taken = new Set(
+    state.players
+      .filter((p) => p.id !== playerId)
+      .map((p) => p.name.toLowerCase())
+  );
+  let name = wanted;
+  if (taken.has(name.toLowerCase())) {
+    let n = 2;
+    while (taken.has(`${wanted} (${n})`.toLowerCase())) n++;
+    name = `${wanted} (${n})`.slice(0, 24);
+  }
+  me.name = name;
+  if (avatar && /^a([0-9]|[1-3][0-9])$/.test(avatar)) me.avatar = avatar;
+}
+
 export function markConnected(
   state: RoomState,
   playerId: string,

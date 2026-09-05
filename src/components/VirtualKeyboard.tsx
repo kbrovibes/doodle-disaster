@@ -3,6 +3,7 @@
 import { memo, useCallback, useEffect, useRef } from "react";
 import { haptic } from "@/lib/client";
 import { sh } from "@/lib/shell";
+import { normalizeGuess } from "@/lib/text";
 
 /**
  * In-app keyboard for touch devices — the native keyboard never opens, so the
@@ -39,11 +40,18 @@ function VirtualKeyboard({
   mask,
   submitLabel,
   onUseDeviceKeyboard,
+  wordLen,
 }: {
   onSubmit: (text: string) => void;
   disabled?: boolean;
   placeholder: string;
   compact?: boolean;
+  /**
+   * The word's shape, e.g. [6,4] for "rubber duck". When given, a draft that
+   * matches it is sent on its own after a short pause — see the note by
+   * considerAutoSend below. Omit it and nothing sends without Enter.
+   */
+  wordLen?: number[];
   /** party mode: the word is typed on the screen everyone can see, so show
    *  dots and let the typist hold the eye to check their spelling */
   mask?: boolean;
@@ -61,8 +69,9 @@ function VirtualKeyboard({
   const peeking = useRef(false);
 
   // props the DOM listener needs, without re-binding the listener on each change
-  const live = useRef({ onSubmit, disabled, placeholder, mask });
-  live.current = { onSubmit, disabled, placeholder, mask };
+  const live = useRef({ onSubmit, disabled, placeholder, mask, wordLen });
+  live.current = { onSubmit, disabled, placeholder, mask, wordLen };
+  const autoTimer = useRef(0);
 
   const paint = useCallback(() => {
     const v = val.current;
@@ -116,7 +125,36 @@ function VirtualKeyboard({
       if (!val.current) return false;
       val.current = val.current.slice(0, -1);
       paint();
+      considerAutoSend();
       return true;
+    };
+
+    /**
+     * Send without waiting for Enter.
+     *
+     * This keyboard is never told the word — that secret is the whole game —
+     * so it cannot know when you have typed it. What it CAN check is the
+     * shape: a correct guess always has exactly the word's letter counts,
+     * which the server already publishes as wordLen for the "5+4" hint. Match
+     * that, stop typing for half a second, and it goes.
+     *
+     * The pause is what stops "cat" firing on the way to "caterpillar".
+     */
+    const considerAutoSend = () => {
+      window.clearTimeout(autoTimer.current);
+      const shape = live.current.wordLen;
+      if (!shape?.length || live.current.disabled) return;
+      autoTimer.current = window.setTimeout(() => {
+        const t = val.current.trim();
+        if (!t) return;
+        const words = normalizeGuess(t).split(" ").filter(Boolean);
+        if (words.length !== shape.length) return;
+        if (words.some((w, i) => w.length !== shape[i])) return;
+        val.current = "";
+        paint();
+        haptic(16);
+        live.current.onSubmit(t);
+      }, 550);
     };
 
     const act = (k: string) => {
@@ -128,6 +166,7 @@ function VirtualKeyboard({
       if (k === ENTER) {
         const t = val.current.trim();
         if (!t) return;
+        window.clearTimeout(autoTimer.current);
         val.current = "";
         paint();
         haptic(16);
@@ -142,12 +181,14 @@ function VirtualKeyboard({
       if (k === CLEAR) {
         if (!val.current) return;
         val.current = "";
+        window.clearTimeout(autoTimer.current);
         paint();
         haptic(12);
         return;
       }
       if (val.current.length < 40) {
         val.current += k === SPACE ? " " : k;
+        considerAutoSend();
         paint(); // synchronous — on screen before this returns
         haptic(8);
       }
@@ -192,6 +233,7 @@ function VirtualKeyboard({
     window.addEventListener("touchcancel", release);
     return () => {
       stopRepeat();
+      window.clearTimeout(autoTimer.current);
       root.removeEventListener("pointerdown", onDown);
       root.removeEventListener("touchstart", swallow);
       window.removeEventListener("pointerup", release);

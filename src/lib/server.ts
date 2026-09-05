@@ -103,6 +103,52 @@ export async function pruneStale(): Promise<void> {
   }
 }
 
+// --- the counter behind the home screen footer ---------------------------
+
+/**
+ * Games are counted when they START, not when they finish.
+ *
+ * Most games never reach a formal ending — people close the tab, and the room
+ * gets tidied up hours later by pruneStale. Counting starts is one increment
+ * per game actually played, it lands the moment it happens, and "Play again"
+ * correctly counts as another game.
+ */
+export async function bumpGamesPlayed(): Promise<void> {
+  try {
+    await db.rpc("doodle_bump_stat", { k: "games_played", by: 1 });
+  } catch {
+    // a stat is never worth failing a request over
+  }
+}
+
+export interface DoodleStats {
+  played: number;
+  live: number;
+}
+
+/**
+ * How many games have ever been played, and how many are being played right
+ * now. "Right now" means a room that is past the lobby and was touched in the
+ * last few minutes — a tab someone left open in the drawing phase yesterday is
+ * not a live game.
+ */
+export async function readStats(): Promise<DoodleStats> {
+  const fresh = new Date(Date.now() - 6 * 60_000).toISOString();
+  const [total, rooms] = await Promise.all([
+    db.from("doodle_stats").select("n").eq("key", "games_played").maybeSingle(),
+    db
+      .from("doodle_rooms")
+      .select("state")
+      .gt("updated_at", fresh)
+      .limit(200),
+  ]);
+  const live = (rooms.data ?? []).filter((r) => {
+    const phase = (r.state as RoomState)?.phase;
+    return phase && phase !== "lobby" && phase !== "gameover";
+  }).length;
+  return { played: Number(total.data?.n ?? 0), live };
+}
+
 /** Push sanitized (spectator-view) state to everyone in the room channel. */
 export async function broadcastState(roomId: string, state: RoomState) {
   const now = Date.now();
@@ -145,10 +191,15 @@ export async function withRoom<T>(
   for (let attempt = 0; attempt < 4; attempt++) {
     const { state, version } = await loadRoom(id);
     const now = Date.now();
+    const wasLobby = state.phase === "lobby";
     const result = mutate(state, now);
     if (saveIf && !saveIf(result)) return { state, result };
     const ok = await saveRoom(id, state, version);
     if (ok) {
+      // lobby -> anything else happens in exactly one place, startGame, so
+      // this is one increment per game without the engine knowing about a
+      // database at all
+      if (wasLobby && state.phase !== "lobby") void bumpGamesPlayed();
       if (broadcast) await broadcastState(id, state);
       return { state, result };
     }

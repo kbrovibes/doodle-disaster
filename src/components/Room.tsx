@@ -6,6 +6,7 @@ import Canvas, { CanvasHandle, Op } from "./Canvas";
 import Chat from "./Chat";
 import Players from "./Players";
 import AvatarPicker from "./AvatarPicker";
+import { normalizeGuess } from "@/lib/text";
 import VirtualKeyboard from "./VirtualKeyboard";
 import GuessClouds from "./GuessClouds";
 import Ticker from "./Ticker";
@@ -935,6 +936,19 @@ export default function Room({ roomId }: { roomId: string }) {
       .catch(() => {});
   }
 
+  /** Change my own name/face. Only offered between games — see renamePlayer. */
+  function renameMe(name: string, avatar: string) {
+    // remember it for the next room too, the way the home screen does
+    saveName(name);
+    saveAvatar(avatar);
+    return api<{ state: ClientState }>(`/${roomId}`, {
+      type: "rename",
+      playerId,
+      name,
+      avatar,
+    }).then(({ state: s }) => applyState(s, false));
+  }
+
   function kick(targetId: string, name: string) {
     api(`/${roomId}`, { type: "kick", playerId, targetId })
       .then(() => addSystem(`${name} was removed from the room`))
@@ -1023,6 +1037,13 @@ export default function Room({ roomId }: { roomId: string }) {
 
   const placeholder =
     isDrawer || isGiver || hasGuessed ? "say something…" : "type your guess…";
+  /**
+   * The word's shape, handed to the inputs so a finished guess can send itself
+   * without Enter. Only for people who are actually guessing: the drawer and
+   * the giver already know the word, and anyone who has solved it is chatting.
+   */
+  const guessShape =
+    drawing && !isDrawer && !isGiver && !hasGuessed ? state.wordLen : undefined;
 
   function submitDraft() {
     const t = draft.trim();
@@ -1079,6 +1100,8 @@ export default function Room({ roomId }: { roomId: string }) {
             copied={copied}
             copiedName={copiedName}
             onSettings={patchSettings}
+            onKick={kick}
+            onRename={renameMe}
           />
         )}
         {state.phase === "gameover" && (
@@ -1247,6 +1270,54 @@ export default function Room({ roomId }: { roomId: string }) {
                 done
               </button>
             </div>
+          {/* On a phone or tablet the roster is a row of tiny chips with no
+              room for a remove button, so the only place the host can throw
+              somebody out mid-game is here. */}
+          {state.players.length > 1 && (
+            <>
+              <div className="text-[11px] font-bold text-ink/50">Players</div>
+              <div className="mb-2 mt-1 flex flex-col gap-1">
+                {state.players
+                  .filter((p) => p.id !== playerId)
+                  .map((p) => (
+                    <div
+                      key={p.id}
+                      className={`flex items-center gap-1.5 rounded-lg border-2 border-ink/15 px-1.5 py-1 ${
+                        !p.connected ? "opacity-45" : ""
+                      }`}
+                    >
+                      <PlayerAvatar token={p.avatar} size={20} />
+                      <span className="min-w-0 flex-1 truncate text-[11px] font-bold">
+                        {p.name}
+                      </span>
+                      {p.isBot && (
+                        <span className="rounded bg-ink/10 px-1 text-[9px] font-extrabold text-ink/50">
+                          BOT
+                        </span>
+                      )}
+                      <button
+                        aria-label={`Remove ${p.name}`}
+                        onClick={() => {
+                          if (p.isBot) {
+                            api(`/${roomId}`, {
+                              type: "removebot",
+                              playerId,
+                              botId: p.id,
+                            }).catch(() => {});
+                          } else {
+                            kick(p.id, p.name);
+                          }
+                        }}
+                        className="shrink-0 rounded-md p-0.5 text-ink/40 transition-colors hover:text-coral"
+                      >
+                        <IconX size={12} />
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            </>
+          )}
+
           <div className="text-[11px] font-bold text-ink/50">
             Draw time (next turn)
           </div>
@@ -1557,13 +1628,18 @@ export default function Room({ roomId }: { roomId: string }) {
               <VirtualKeyboard
                 onSubmit={sendChat}
                 placeholder={placeholder}
+                wordLen={guessShape}
                 compact
                 onUseDeviceKeyboard={useDeviceKeyboard}
               />
             </div>
           )}
           {showNativeBar && (
-            <NativeGuessBar onSubmit={sendChat} placeholder={placeholder} />
+            <NativeGuessBar
+              onSubmit={sendChat}
+              placeholder={placeholder}
+              wordLen={guessShape}
+            />
           )}
         </aside>
       </div>
@@ -1624,11 +1700,16 @@ export default function Room({ roomId }: { roomId: string }) {
               <VirtualKeyboard
                 onSubmit={sendChat}
                 placeholder={placeholder}
+                wordLen={guessShape}
                 onUseDeviceKeyboard={useDeviceKeyboard}
               />
             </div>
           ) : showNativeBar ? (
-            <NativeGuessBar onSubmit={sendChat} placeholder={placeholder} />
+            <NativeGuessBar
+              onSubmit={sendChat}
+              placeholder={placeholder}
+              wordLen={guessShape}
+            />
           ) : !isTouch && smallRoom ? (
             <form
               onSubmit={(e) => {
@@ -1667,11 +1748,16 @@ export default function Room({ roomId }: { roomId: string }) {
 const NativeGuessBar = memo(function NativeGuessBar({
   onSubmit,
   placeholder,
+  wordLen,
 }: {
   onSubmit: (text: string) => void;
   placeholder: string;
+  /** the word's shape, e.g. [6,4] for "rubber duck"; empty when not drawing */
+  wordLen?: number[];
 }) {
   const ref = useRef<HTMLInputElement>(null);
+  const shapeRef = useRef<number[]>([]);
+  shapeRef.current = wordLen ?? [];
 
   useEffect(() => {
     const t = window.setTimeout(
@@ -1688,10 +1774,46 @@ const NativeGuessBar = memo(function NativeGuessBar({
     const v = el.value.trim();
     el.value = "";
     if (!v) return;
+    window.clearTimeout(autoTimer.current);
     haptic(16);
     onSubmit(v);
     el.focus({ preventScroll: true }); // keep it up for the next guess
   };
+
+  /**
+   * Send without waiting for Enter.
+   *
+   * The browser is never told the word — that secret is the whole game — so it
+   * cannot know when you have typed it. What it CAN check is the shape: a
+   * correct guess always has exactly the word's letter counts, which the
+   * server publishes as wordLen for the "5+4" hint. So the moment the box
+   * matches that shape and you stop typing, it goes.
+   *
+   * The pause matters. Without it, typing "cat" on the way to "caterpillar"
+   * would fire the instant the shape lined up.
+   */
+  const AUTOSEND_PAUSE_MS = 550;
+  const autoTimer = useRef<number | undefined>(undefined);
+
+  const considerAutoSend = () => {
+    window.clearTimeout(autoTimer.current);
+    const shape = shapeRef.current;
+    if (!shape.length) return;
+    autoTimer.current = window.setTimeout(() => {
+      const el = ref.current;
+      if (!el) return;
+      const v = el.value.trim();
+      if (!v) return;
+      const words = normalizeGuess(v).split(" ").filter(Boolean);
+      if (words.length !== shape.length) return;
+      if (words.some((w, i) => w.length !== shape[i])) return;
+      el.value = "";
+      haptic(16);
+      onSubmit(v);
+    }, AUTOSEND_PAUSE_MS);
+  };
+
+  useEffect(() => () => window.clearTimeout(autoTimer.current), []);
 
   return (
     <form onSubmit={submit} className="flex shrink-0 items-center gap-1.5">
@@ -1700,10 +1822,13 @@ const NativeGuessBar = memo(function NativeGuessBar({
         type="text"
         maxLength={40}
         placeholder={placeholder}
+        onChange={considerAutoSend}
         enterKeyHint="send"
         autoComplete="off"
         autoCorrect="off"
-        autoCapitalize="none"
+        // shift-locked: a six year old reading a word off the telly in capitals
+        // should not have to find the shift key to type it back
+        autoCapitalize="characters"
         spellCheck={false}
         onBlur={(e) => {
           // tapping a control (hint, settings, the mode toggle) is allowed to
@@ -1880,6 +2005,83 @@ function GiveWord({
         {!choices && <span className="animate-pulse">loading words…</span>}
       </div>
     </div>
+  );
+}
+
+/**
+ * Change your own name and face. Reachable from the lobby, which is where you
+ * land after "Play again" — the moment somebody decides they would rather not
+ * spend another five rounds as whatever they typed in a hurry.
+ */
+function EditMe({
+  name,
+  avatar,
+  onSave,
+  onClose,
+}: {
+  name: string;
+  avatar: string;
+  onSave: (name: string, avatar: string) => Promise<unknown>;
+  onClose: () => void;
+}) {
+  const [draft, setDraft] = useState(name);
+  const [face, setFace] = useState(avatar);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const save = () => {
+    const n = draft.trim();
+    if (!n || busy) return;
+    setBusy(true);
+    setErr("");
+    onSave(n, face)
+      .then(onClose)
+      .catch((e) => {
+        setErr((e as Error).message);
+        setBusy(false);
+      });
+  };
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-ink/20" onClick={onClose} />
+      <div className="fixed left-1/2 top-1/2 z-50 w-[min(88vw,320px)] -translate-x-1/2 -translate-y-1/2 rounded-2xl border-2 border-ink bg-white p-4 shadow-doodle">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="font-display text-base font-bold">This is you</span>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded-lg px-2 py-0.5 text-xs font-bold text-ink/45"
+          >
+            cancel
+          </button>
+        </div>
+
+        <div className="flex justify-center">
+          <AvatarPicker value={face} onChange={setFace} />
+        </div>
+
+        <label className="mt-3 block text-sm font-bold text-ink/70">
+          Your name
+        </label>
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && save()}
+          maxLength={20}
+          className="mt-1 w-full rounded-xl border-2 border-ink/20 bg-paper px-3 py-2 text-lg font-bold outline-none focus:border-ink"
+        />
+        {err && <p className="mt-1 text-xs font-bold text-coral">{err}</p>}
+
+        <button
+          onClick={save}
+          disabled={!draft.trim() || busy}
+          className="btn-primary mt-3 w-full disabled:opacity-40"
+        >
+          {busy ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -2170,6 +2372,8 @@ function Lobby({
   copied,
   copiedName,
   onSettings,
+  onKick,
+  onRename,
 }: {
   state: ClientState;
   meId: string;
@@ -2180,8 +2384,12 @@ function Lobby({
   copied: boolean;
   copiedName: boolean;
   onSettings: (patch: Record<string, unknown>) => void;
+  onKick: (id: string, name: string) => void;
+  onRename: (name: string, avatar: string) => Promise<unknown>;
 }) {
   const canStart = state.players.filter((p) => p.connected).length >= 2;
+  const me = state.players.find((p) => p.id === meId);
+  const [editing, setEditing] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
   const [themeText, setThemeText] = useState("");
   const [themeBusy, setThemeBusy] = useState(false);
@@ -2237,13 +2445,24 @@ function Lobby({
           </button>
         </div>
 
+        {editing && (
+          <EditMe
+            name={me?.name ?? ""}
+            avatar={me?.avatar ?? "a0"}
+            onSave={onRename}
+            onClose={() => setEditing(false)}
+          />
+        )}
+
         <div className="mt-5 flex flex-wrap items-center gap-2">
-          {state.players.map((p) => (
+          {state.players.map((p) => {
+            const isMe = p.id === meId;
+            return (
             <span
               key={p.id}
-              className={`flex items-center gap-1.5 rounded-xl border-2 border-ink/15 bg-paper px-3 py-1.5 font-bold ${
-                !p.connected ? "opacity-40" : ""
-              }`}
+              className={`flex items-center gap-1.5 rounded-xl border-2 px-3 py-1.5 font-bold ${
+                isMe ? "border-ink bg-white shadow-doodle" : "border-ink/15 bg-paper"
+              } ${!p.connected ? "opacity-40" : ""}`}
             >
               <PlayerAvatar token={p.avatar} size={26} /> {p.name}
               {p.isBot && (
@@ -2251,25 +2470,41 @@ function Lobby({
                   BOT
                 </span>
               )}
-              {p.id === meId && <span className="font-normal text-ink/40">(you)</span>}
               {p.id === state.hostId && <IconCrown size={16} />}
-              {p.isBot && isHost && (
+              {isMe && (
+                <button
+                  onClick={() => setEditing(true)}
+                  title="Change your name and face"
+                  className="rounded-lg border-2 border-dashed border-ink/25 px-1.5 text-[10px] font-extrabold uppercase tracking-wide text-ink/50 transition-colors hover:border-ink hover:text-ink"
+                >
+                  edit
+                </button>
+              )}
+              {/* bots get pulled out of the roster; people get removed from
+                  the room, and either way only the host may do it */}
+              {isHost && !isMe && (
                 <button
                   aria-label={`Remove ${p.name}`}
-                  onClick={() =>
-                    api(`/${roomId}`, {
-                      type: "removebot",
-                      playerId: meId,
-                      botId: p.id,
-                    }).catch(() => {})
-                  }
-                  className="opacity-40 hover:opacity-100"
+                  title={`Remove ${p.name}`}
+                  onClick={() => {
+                    if (p.isBot) {
+                      api(`/${roomId}`, {
+                        type: "removebot",
+                        playerId: meId,
+                        botId: p.id,
+                      }).catch(() => {});
+                    } else {
+                      onKick(p.id, p.name);
+                    }
+                  }}
+                  className="opacity-40 transition-opacity hover:opacity-100"
                 >
                   <IconX size={12} />
                 </button>
               )}
             </span>
-          ))}
+            );
+          })}
           {isHost && state.players.filter((p) => p.isBot).length < 3 && (
             <button
               onClick={() =>

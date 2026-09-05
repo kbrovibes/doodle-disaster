@@ -17,6 +17,7 @@ import { IconLogo, IconRocket, Wordmark } from "@/components/icons";
 import AvatarPicker from "@/components/AvatarPicker";
 import InstallTip from "@/components/InstallTip";
 import MyGames from "@/components/MyGames";
+import Tally from "@/components/Tally";
 import { recordGame } from "@/lib/games";
 import { loadRing, syncRing } from "@/lib/played";
 
@@ -216,6 +217,7 @@ export default function Home() {
       <p className="mt-8 text-center text-xs text-ink/40">
         No accounts · no ads · no artistic talent required
       </p>
+      <Tally />
     </main>
   );
 }
