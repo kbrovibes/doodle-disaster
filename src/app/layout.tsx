@@ -14,10 +14,34 @@ const body = Nunito({
   subsets: ["latin"],
 });
 
+/**
+ * Absolute base for og:image URLs — WhatsApp and friends will not follow a
+ * relative one. Vercel hands us the deployment host; the production domain is
+ * the fallback so a local build still emits sane links.
+ */
+const site =
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  (process.env.VERCEL_ENV === "production"
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : process.env.VERCEL_URL
+    ? `https://${process.env.VERCEL_URL}`
+    : "https://doodle-disaster.vercel.app");
+
+const TITLE = "DoodleDisaster — draw badly, guess wildly";
+const DESCRIPTION =
+  "A lightweight pictionary game for friends. Create a room, share the link, start scribbling. No accounts, no ads, no mercy.";
+
 export const metadata: Metadata = {
-  title: "DoodleDisaster — draw badly, guess wildly",
-  description:
-    "A lightweight pictionary game for friends. Create a room, share the link, start scribbling. No accounts, no ads, no mercy.",
+  metadataBase: new URL(site),
+  title: TITLE,
+  description: DESCRIPTION,
+  openGraph: {
+    type: "website",
+    siteName: "Doodle Disaster",
+    title: TITLE,
+    description: DESCRIPTION,
+  },
+  twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",

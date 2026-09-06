@@ -8,7 +8,6 @@ import Players from "./Players";
 import AvatarPicker from "./AvatarPicker";
 import { normalizeGuess } from "@/lib/text";
 import VirtualKeyboard from "./VirtualKeyboard";
-import GuessClouds from "./GuessClouds";
 import Ticker from "./Ticker";
 import InstallTip from "./InstallTip";
 import { recordGame, touchGame } from "@/lib/games";
@@ -1025,7 +1024,6 @@ export default function Room({ roomId }: { roomId: string }) {
   const drawer = state.players.find((p) => p.id === state.drawerId);
   const inGame = ["choosing", "drawing", "reveal"].includes(state.phase);
   const drawing = state.phase === "drawing";
-  const smallRoom = state.players.length <= 4;
   const layout: "desktop" | "tl" | "tp" = !isTouch
     ? "desktop"
     : landscape
@@ -1052,35 +1050,50 @@ export default function Room({ roomId }: { roomId: string }) {
     sendChat(t);
   }
 
+  const codeChip = state.phase !== "lobby" && (
+    <button
+      onClick={copyLink}
+      className="with-glyph min-w-0 shrink-0 rounded-xl border-2 border-ink bg-sun px-2.5 py-1 text-[11px] font-bold shadow-doodle transition-transform active:scale-95 sm:text-xs"
+    >
+      <span className="grid">
+        <span
+          className={`col-start-1 row-start-1 flex items-center justify-center gap-1.5 ${copied ? "invisible" : ""}`}
+        >
+          <span className="max-w-[42vw] truncate tracking-widest sm:max-w-none">{roomCode(roomId)}</span>
+          <IconLink size={14} />
+        </span>
+        <span
+          className={`col-start-1 row-start-1 flex items-center justify-center gap-1.5 ${copied ? "" : "invisible"}`}
+        >
+          Copied! <IconCheck size={15} />
+        </span>
+      </span>
+    </button>
+  );
+
   const header = (
-    <header className="flex shrink-0 items-center gap-2">
+    <header className="flex shrink-0 items-center gap-2 overflow-hidden">
       <a
         href="/"
-        className="shrink-0 leading-none"
+        className="min-w-0 shrink leading-none"
         style={{ fontSize: `clamp(20px, ${sh(3.6)}, 36px)` }}
       >
         <IconLogo size={26} /> <Wordmark />
       </a>
-      {state.phase !== "lobby" && (
-        <button
-          onClick={copyLink}
-          className="with-glyph ml-auto min-w-0 rounded-xl border-2 border-ink bg-sun px-2.5 py-1 text-[11px] font-bold shadow-doodle transition-transform active:scale-95 sm:text-xs"
-        >
-          <span className="grid">
-            <span
-              className={`col-start-1 row-start-1 flex items-center justify-center gap-1.5 ${copied ? "invisible" : ""}`}
-            >
-              <span className="max-w-[42vw] truncate tracking-widest sm:max-w-none">{roomCode(roomId)}</span>
-              <IconLink size={14} />
-            </span>
-            <span
-              className={`col-start-1 row-start-1 flex items-center justify-center gap-1.5 ${copied ? "" : "invisible"}`}
-            >
-              Copied! <IconCheck size={15} />
-            </span>
-          </span>
-        </button>
-      )}
+      <span className="ml-auto shrink-0">{codeChip}</span>
+    </header>
+  );
+
+  /**
+   * Landscape parks everything in a 190px rail, where the wordmark and the
+   * room code cannot both fit — and the code is the half people actually tap.
+   */
+  const railHeader = (
+    <header className="flex shrink-0 items-center gap-2 overflow-hidden">
+      <a href="/" className="shrink-0 leading-none">
+        <IconLogo size={22} />
+      </a>
+      <span className="ml-auto min-w-0">{codeChip}</span>
     </header>
   );
 
@@ -1196,6 +1209,8 @@ export default function Room({ roomId }: { roomId: string }) {
                     ? "bg-green-100 text-green-800"
                     : tier === "chaos"
                     ? "bg-coral/15 text-coral"
+                    : tier === "ultra"
+                    ? "bg-coral text-white"
                     : "bg-ink/5 text-ink/60";
                 return (
                   <button
@@ -1215,7 +1230,7 @@ export default function Room({ roomId }: { roomId: string }) {
                     <span
                       className={`rounded-full px-2 text-[10px] font-extrabold uppercase tracking-wide ${tierStyle}`}
                     >
-                      {tier}
+                      {tier === "ultra" ? "insanity" : tier}
                     </span>
                   </button>
                 );
@@ -1481,10 +1496,12 @@ export default function Room({ roomId }: { roomId: string }) {
     </button>
   );
 
-  // reveal scores + live guesses share one strip, always beside the board
-  const feed = smallRoom ? (
-    <GuessClouds messages={msgs} className="h-full" />
-  ) : (
+  /**
+   * One feed, every room size, every screen. It used to fork into evaporating
+   * speech bubbles for small rooms and a scrollback for big ones, which meant
+   * two sets of sizing bugs and no way to look back at what somebody said.
+   */
+  const feed = (
     <Chat
       messages={msgs}
       onSend={sendChat}
@@ -1494,10 +1511,28 @@ export default function Room({ roomId }: { roomId: string }) {
     />
   );
 
+  /**
+   * The board is 4:3 and a phone held upright is far taller than that, so the
+   * canvas column was being handed height it could never use — dead paper
+   * above and below the drawing. Capping the column at exactly the height its
+   * own width implies hands all of that to the chat underneath, and the board
+   * itself does not lose a single pixel.
+   *
+   * The drawer is the exception: their palette hangs below the board and needs
+   * the column to stay flexible.
+   */
+  const boardCap =
+    isDrawer && drawing
+      ? undefined
+      : { maxHeight: "calc((100vw - 1.5rem) * 0.75)" };
+
+  /** never so short that the chat is a sliver, never so tall it eats the board */
+  const feedFloor = { minHeight: `clamp(56px, ${sh(12)}, 140px)` };
+
   if (layout === "desktop") {
-    // Desktop: the board is the point. Only one narrow rail (roster + guesses)
-    // and, in bigger rooms, a chat column — everything else goes to the canvas,
-    // with the typing box directly under the board where your eyes already are.
+    // Desktop: the board is the point. A narrow roster rail on the left, the
+    // chat rail on the right, everything else to the canvas — with the typing
+    // box directly under the board where your eyes already are.
     return (
       <div className="dd-game dd-nosel mx-auto flex w-full max-w-[1500px] flex-col gap-2 px-3 py-2">
         {header}
@@ -1523,9 +1558,6 @@ export default function Room({ roomId }: { roomId: string }) {
                 </div>
               )}
             </div>
-            {smallRoom && (
-              <GuessClouds messages={msgs} className="min-h-0 flex-1" />
-            )}
           </div>
 
           <section className="flex min-h-0 flex-1 flex-col items-center gap-2">
@@ -1558,17 +1590,15 @@ export default function Room({ roomId }: { roomId: string }) {
             </div>
           </section>
 
-          {!smallRoom && (
-            <aside className="flex min-h-0 w-[290px] shrink-0 flex-col">
-              <Chat
-                messages={msgs}
-                onSend={sendChat}
-                disabled={false}
-                placeholder={placeholder}
-                hideInput
-              />
-            </aside>
-          )}
+          <aside className="flex min-h-0 w-[290px] shrink-0 flex-col">
+            <Chat
+              messages={msgs}
+              onSend={sendChat}
+              disabled={false}
+              placeholder={placeholder}
+              hideInput
+            />
+          </aside>
         </main>
       </div>
     );
@@ -1594,7 +1624,7 @@ export default function Room({ roomId }: { roomId: string }) {
             width: showKeyboard ? "clamp(320px, 44%, 640px)" : "190px",
           }}
         >
-          {!kbOpen && header}
+          {!kbOpen && railHeader}
           <WordBar
             state={state}
             isDrawer={isDrawer}
@@ -1608,7 +1638,7 @@ export default function Room({ roomId }: { roomId: string }) {
             compact
           />
           {!kbOpen && (
-            <div className={`flex shrink-0 items-center gap-1 overflow-x-auto ${chrome}`}>
+            <div className={`flex shrink-0 items-center gap-1 ${chrome}`}>
               <Players state={state} meId={playerId} variant="mini" />
               <span className="ml-auto flex shrink-0 items-center gap-1">
                 {addBotButton}
@@ -1617,12 +1647,17 @@ export default function Room({ roomId }: { roomId: string }) {
               </span>
             </div>
           )}
-          <div className="flex min-h-0 flex-1 items-end gap-1.5">
-            {hintButton}
-            <div className={`flex min-h-0 min-w-0 flex-1 flex-col justify-end ${chrome}`}>
-              {!kbOpen && feed}
+          {!kbOpen && (
+            <div
+              className={`flex min-h-0 min-w-0 flex-1 flex-col ${chrome}`}
+              style={feedFloor}
+            >
+              {feed}
             </div>
-          </div>
+          )}
+          {hintButton && (
+            <div className="flex shrink-0 justify-end">{hintButton}</div>
+          )}
           {showKeyboard && (
             <div className="shrink-0">
               <VirtualKeyboard
@@ -1662,9 +1697,21 @@ export default function Room({ roomId }: { roomId: string }) {
         compact
       />
 
-      <main className="flex min-h-0 flex-1 flex-col gap-1">
+      {/*
+        Three bands, and every one of them is a real flex item with a real
+        height: board, roster, chat. Nothing is absolutely positioned over the
+        drawing and nothing sizes itself off its own content, which is what
+        used to let the chat card grow up behind the board.
 
-        <section className="relative flex min-h-0 flex-1 flex-col gap-1.5">
+        With the device keyboard up there is genuinely no room left, so the
+        roster and chat stand down and the Ticker floats the headlines over the
+        bottom of the board instead — at zero cost to the drawing.
+      */}
+      <main className="flex min-h-0 flex-1 flex-col gap-1">
+        <section
+          className="relative flex min-h-0 flex-[2_1_0%] flex-col gap-1.5"
+          style={boardCap}
+        >
           <Canvas
             ref={canvasRef}
             channel={channelRef.current}
@@ -1674,62 +1721,44 @@ export default function Room({ roomId }: { roomId: string }) {
           {kbOpen && <Ticker messages={msgs} />}
         </section>
 
-        <aside className="flex shrink-0 flex-col gap-1">
-          {!kbOpen && (
-            <div className={`flex shrink-0 items-center gap-1 overflow-x-auto ${chrome}`}>
-              <Players state={state} meId={playerId} variant="mini" />
-              <span className="ml-auto flex shrink-0 items-center gap-1">
-                {addBotButton}
-                {kbToggle}
-                {settingsButton}
-              </span>
-            </div>
-          )}
-
-          {!kbOpen && (
-            <div className="flex min-h-0 items-end gap-1.5" style={{ height: `clamp(39px, ${sh(7.3)}, 86px)` }}>
+        {!kbOpen && (
+          <div className={`flex shrink-0 items-center gap-1 ${chrome}`}>
+            <Players state={state} meId={playerId} variant="mini" />
+            <span className="ml-auto flex shrink-0 items-center gap-1">
               {hintButton}
-              <div className={`flex min-h-0 min-w-0 flex-1 flex-col justify-end ${chrome}`}>
-                {feed}
-              </div>
-            </div>
-          )}
+              {addBotButton}
+              {kbToggle}
+              {settingsButton}
+            </span>
+          </div>
+        )}
 
-          {showKeyboard ? (
-            <div className="shrink-0">
-              <VirtualKeyboard
-                onSubmit={sendChat}
-                placeholder={placeholder}
-                wordLen={guessShape}
-                onUseDeviceKeyboard={useDeviceKeyboard}
-              />
-            </div>
-          ) : showNativeBar ? (
-            <NativeGuessBar
-              onSubmit={sendChat}
-              placeholder={placeholder}
-              wordLen={guessShape}
-            />
-          ) : !isTouch && smallRoom ? (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                submitDraft();
-              }}
-              className="shrink-0"
-            >
-              <input
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                placeholder={placeholder}
-                maxLength={100}
-                autoComplete="off"
-                className="w-full rounded-xl border-2 border-ink/20 bg-white px-3 py-2.5 text-xs outline-none focus:border-ink/50"
-              />
-            </form>
-          ) : null}
-        </aside>
+        {!kbOpen && (
+          <div
+            className={`flex min-h-0 flex-[1_1_0%] flex-col ${chrome}`}
+            style={feedFloor}
+          >
+            {feed}
+          </div>
+        )}
       </main>
+
+      {showKeyboard ? (
+        <div className="shrink-0">
+          <VirtualKeyboard
+            onSubmit={sendChat}
+            placeholder={placeholder}
+            wordLen={guessShape}
+            onUseDeviceKeyboard={useDeviceKeyboard}
+          />
+        </div>
+      ) : showNativeBar ? (
+        <NativeGuessBar
+          onSubmit={sendChat}
+          placeholder={placeholder}
+          wordLen={guessShape}
+        />
+      ) : null}
     </div>
   );
 }
@@ -2521,37 +2550,55 @@ function Lobby({
           <>
             <div className="mt-5">
               <span className="text-xs font-bold">Difficulty</span>
-              <div className="mt-1 grid grid-cols-4 gap-1.5">
+              <div className="mt-1 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
                 {(
                   [
                     { key: "kids", label: "KIDS", sub: "under 7s" },
                     { key: "medium", label: "Medium", sub: "casual" },
                     { key: "hard", label: "Hard", sub: "sweaty" },
-                    { key: "ultra", label: "Ultra", sub: "no mercy" },
+                    { key: "ultra", label: "INSANITY", sub: "abandon hope" },
                   ] as const
                 ).map((d) => {
                   const active =
                     (state.settings.difficulty ?? "medium") === d.key;
+                  const wild = d.key === "ultra";
                   return (
                     <button
                       key={d.key}
                       onClick={() => onSettings({ difficulty: d.key })}
                       className={`rounded-xl border-2 px-1 py-2 text-center transition-all ${
                         active
-                          ? "border-ink bg-sun shadow-doodle"
+                          ? wild
+                            ? "border-ink bg-coral text-white shadow-doodle"
+                            : "border-ink bg-sun shadow-doodle"
                           : "border-ink/15 bg-paper hover:border-ink/40"
                       }`}
                     >
-                      <span className="block font-display font-bold leading-tight">
+                      <span
+                        className={`block font-display font-bold leading-tight ${
+                          wild ? "text-[13px] tracking-tight sm:text-xs" : ""
+                        }`}
+                      >
                         {d.label}
                       </span>
-                      <span className="block text-[11px] text-ink/50">
+                      <span
+                        className={`block text-[11px] ${
+                          active && wild ? "text-white/75" : "text-ink/50"
+                        }`}
+                      >
                         {d.sub}
                       </span>
                     </button>
                   );
                 })}
               </div>
+              {(state.settings.difficulty ?? "medium") === "ultra" && (
+                <p className="mt-1.5 rounded-xl border-2 border-dashed border-coral/40 bg-coral/5 px-2.5 py-1.5 text-[11px] leading-snug text-ink/70">
+                  <b className="text-coral">INSANITY is not for the faint of heart.</b>{" "}
+                  No objects, no animals — only abstract nouns, feelings and
+                  ideas. Expect long silences and personal growth.
+                </p>
+              )}
             </div>
 
             <div className="mt-5">
@@ -2753,8 +2800,16 @@ function Lobby({
             <p className="mt-4 text-center text-xs text-ink/50">
               {state.settings.rounds} round{state.settings.rounds > 1 ? "s" : ""} ·{" "}
               {state.settings.drawSeconds}s draws ·{" "}
-              <span className="capitalize">{state.settings.difficulty ?? "medium"}</span>{" "}
-              difficulty
+              {(state.settings.difficulty ?? "medium") === "ultra" ? (
+                <b className="text-coral">INSANITY</b>
+              ) : (
+                <>
+                  <span className="capitalize">
+                    {state.settings.difficulty ?? "medium"}
+                  </span>{" "}
+                  difficulty
+                </>
+              )}
               {state.theme ? <> · themed: “{state.theme}”</> : null}
             </p>
             <p className="mt-3 animate-pulse text-center font-display text-base text-ink/50">
@@ -2959,9 +3014,10 @@ function JoinGate({
           <h1 className="mt-2 text-2xl">
             <Wordmark />
           </h1>
-          <p className="mt-1 text-ink/60">
-            You&apos;re joining <b>{roomCode(roomId)}</b>
-          </p>
+          <p className="mt-1 text-ink/60">You&apos;re joining</p>
+          <div className="mt-1 rounded-xl bg-sun/35 px-3 py-1.5 font-display text-lg font-bold tracking-[0.22em] break-all">
+            {roomCode(roomId)}
+          </div>
           <form onSubmit={join} className="mt-5">
             <div className="mb-3 flex justify-center">
               <AvatarPicker
@@ -2995,6 +3051,10 @@ function JoinGate({
           <p className="mt-4 text-[11px] text-ink/40">
             Draw the word · guess fast for points · never write letters!
           </p>
+          {/* most people arrive here from a WhatsApp link, in a browser tab
+              with an address bar eating the board — this is the one moment
+              they will listen about installing it */}
+          <InstallTip />
         </div>
       </div>
     </Shell>
