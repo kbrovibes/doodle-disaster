@@ -78,7 +78,13 @@ export async function pruneStale(): Promise<void> {
       .limit(50);
     const ids = (dead ?? []).map((r) => r.id as string);
     if (ids.length) {
-      await db.from("doodle_shots").delete().in("room_id", ids);
+      // drawings not yet copied to the gallery are kept for the archive job,
+      // which copes fine with their room being gone
+      await db
+        .from("doodle_shots")
+        .delete()
+        .in("room_id", ids)
+        .not("archived_at", "is", null);
       await db.from("doodle_rooms").delete().in("id", ids);
     }
 

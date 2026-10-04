@@ -28,6 +28,7 @@ export interface CanvasHandle {
   getOps: () => Op[];
   snapshot: () => string; // dataURL
   snapshotSmall: () => string; // downscaled jpeg for bot vision
+  snapshotKeep: () => string; // gallery-quality jpeg, for the archive
   inkFraction: () => number; // 0..1 how much of the board has marks on it
   reset: () => void;
 }
@@ -267,15 +268,14 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       }
       return inked / (64 * 48);
     },
-    snapshotSmall: () => {
-      const c = document.createElement("canvas");
-      c.width = 320;
-      c.height = 240;
-      const g = c.getContext("2d")!;
-      g.fillStyle = "#fff";
-      g.fillRect(0, 0, 320, 240);
-      g.drawImage(buf(), 0, 0, 320, 240);
-      return c.toDataURL("image/jpeg", 0.6);
+    snapshotSmall: () => jpeg(buf(), 320, 240, 0.6),
+    snapshotKeep: () => {
+      // step down quality until it fits the upload cap
+      for (const q of [0.82, 0.7, 0.55]) {
+        const url = jpeg(buf(), 640, 480, q);
+        if (url.length < 190_000) return url;
+      }
+      return jpeg(buf(), 320, 240, 0.6);
     },
     reset() {
       opsRef.current = [];
@@ -514,3 +514,14 @@ function ToolBtn({
 
 export default Canvas;
 export type { Op };
+
+function jpeg(src: HTMLCanvasElement, w: number, h: number, quality: number) {
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const g = c.getContext("2d")!;
+  g.fillStyle = "#fff";
+  g.fillRect(0, 0, w, h);
+  g.drawImage(src, 0, 0, w, h);
+  return c.toDataURL("image/jpeg", quality);
+}

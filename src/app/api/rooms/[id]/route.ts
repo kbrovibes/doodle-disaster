@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { THEMES } from "@/lib/wordbank/themes";
 import {
   addBot,
@@ -8,8 +8,10 @@ import {
   endGame,
   giveWord,
   handleGuess,
+  isDrawathon,
   kickPlayer,
   markConnected,
+  markDone,
   playAgain,
   removeBot,
   renamePlayer,
@@ -23,6 +25,7 @@ import { buildPlan, hashStr } from "@/lib/botdraw";
 import { pickAvatar } from "@/lib/names";
 import { generateThemedWords, parseWordList } from "@/lib/theme";
 import { db, loadRoom, RoomError, withRoom } from "@/lib/server";
+import { archiveShots } from "@/lib/gallery";
 import { Player } from "@/lib/types";
 
 type Params = { params: Promise<{ id: string }> };
@@ -125,10 +128,11 @@ export async function POST(req: NextRequest, { params }: Params) {
       case "leave": {
         await withRoom(id, (s, now) => {
           markConnected(s, playerId, false);
-          // if the drawer bailed, let the round resolve
+          // if the drawer bailed, let the round resolve — and in a
+          // draw-a-thon anyone leaving may be the last pen still out
           if (
             (s.phase === "drawing" || s.phase === "choosing") &&
-            s.drawerId === playerId
+            (s.drawerId === playerId || isDrawathon(s))
           ) {
             advance(s, now);
           }
@@ -154,6 +158,8 @@ export async function POST(req: NextRequest, { params }: Params) {
         const diffOk = ["kids", "medium", "hard", "ultra"].includes(difficulty);
         const wordSource = String(body.wordSource ?? "");
         const sourceOk = ["bank", "giver"].includes(wordSource);
+        const mode = String(body.mode ?? "");
+        const modeOk = ["classic", "drawathon"].includes(mode);
         const rawPacks = body.themePacks;
         const known = new Set(THEMES.map((t) => t.key));
         const themePacks = Array.isArray(rawPacks)
@@ -175,7 +181,8 @@ export async function POST(req: NextRequest, { params }: Params) {
         const sent = (k: string) => body[k] !== undefined && body[k] !== null;
         if ((sent("rounds") && !roundsOk) || (sent("drawSeconds") && !drawOk) ||
             (sent("difficulty") && !diffOk) ||
-            (sent("wordSource") && !sourceOk)) {
+            (sent("wordSource") && !sourceOk) ||
+            (sent("mode") && !modeOk)) {
           return NextResponse.json(
             {
               error:
@@ -184,7 +191,7 @@ export async function POST(req: NextRequest, { params }: Params) {
             { status: 400 }
           );
         }
-        if (!roundsOk && !drawOk && !diffOk && !themeOk && !sourceOk) {
+        if (!roundsOk && !drawOk && !diffOk && !themeOk && !sourceOk && !modeOk) {
           return NextResponse.json(
             {
               error:
@@ -204,6 +211,11 @@ export async function POST(req: NextRequest, { params }: Params) {
             s.settings.themePacks = themePacks.length ? themePacks : null;
           // takes effect from the next turn, like every other setting here
           if (sourceOk) s.settings.wordSource = wordSource as "bank" | "giver";
+          // the kind of game can only change before it starts
+          if (modeOk) {
+            if (s.phase !== "lobby") throw new RoomError("Game in progress");
+            s.settings.mode = mode as "classic" | "drawathon";
+          }
         });
         return NextResponse.json({
           state: sanitize(state, playerId, Date.now()),
@@ -288,25 +300,37 @@ export async function POST(req: NextRequest, { params }: Params) {
         const { state: s } = await loadRoom(id);
         if (s.phase !== "reveal" || !s.lastTurn || s.lastTurn.skipped)
           return NextResponse.json({ ok: false });
-        const artist = s.players.find((p) => p.id === s.lastTurn!.drawerId);
-        const mayUpload =
-          playerId === s.lastTurn.drawerId ||
-          (artist?.isBot && s.hostId === playerId);
-        if (!mayUpload) return NextResponse.json({ ok: false });
-        if (!image.startsWith("data:image/") || image.length > 90_000)
+        if (!image.startsWith("data:image/") || image.length > 200_000)
           return NextResponse.json({ ok: false });
-        const turn = s.round * 1000 + s.turnIndex;
+        // a draw-a-thon has one drawing per player per round, so each seat
+        // gets its own slot; the classic game has one per turn
+        const drawathon = isDrawathon(s);
+        const seat = s.order.indexOf(playerId);
+        if (drawathon) {
+          if (seat < 0) return NextResponse.json({ ok: false });
+        } else {
+          const artist = s.players.find((p) => p.id === s.lastTurn!.drawerId);
+          const mayUpload =
+            playerId === s.lastTurn.drawerId ||
+            (artist?.isBot && s.hostId === playerId);
+          if (!mayUpload) return NextResponse.json({ ok: false });
+        }
+        const turn = s.round * 1000 + (drawathon ? seat : s.turnIndex);
         const { error } = await db.from("doodle_shots").upsert(
           {
             room_id: id,
             turn,
             word: s.lastTurn.word,
-            drawer_id: s.lastTurn.drawerId,
+            drawer_id: drawathon ? playerId : s.lastTurn.drawerId,
             image,
+            archived_at: null,
           },
           { onConflict: "room_id,turn" }
         );
         if (error) console.error("shot upload failed", error.message);
+        // copy it into the permanent gallery once the reply has gone — the
+        // game never waits on this, and the nightly sweep catches any misses
+        else after(() => archiveShots({ roomId: id, limit: 20 }).catch(() => {}));
         return NextResponse.json({ ok: !error });
       }
       case "botplan": {
@@ -385,6 +409,14 @@ export async function POST(req: NextRequest, { params }: Params) {
           state: sanitize(state, playerId, Date.now()),
         });
       }
+      case "done": {
+        const { state } = await withRoom(id, (s, now) => {
+          markDone(s, playerId, now);
+        });
+        return NextResponse.json({
+          state: sanitize(state, playerId, Date.now()),
+        });
+      }
       case "pass": {
         // the drawer giving up on their own turn
         const { state } = await withRoom(id, (s, now) => {
@@ -439,7 +471,23 @@ export async function POST(req: NextRequest, { params }: Params) {
         });
       }
       case "again": {
-        await db.from("doodle_shots").delete().eq("room_id", id);
+        // only shots already copied to the gallery are thrown away; anything
+        // still pending is archived first, after the reply has gone
+        await db
+          .from("doodle_shots")
+          .delete()
+          .eq("room_id", id)
+          .not("archived_at", "is", null);
+        after(async () => {
+          try {
+            await archiveShots({ roomId: id });
+            await db
+              .from("doodle_shots")
+              .delete()
+              .eq("room_id", id)
+              .not("archived_at", "is", null);
+          } catch {}
+        });
         const { state } = await withRoom(id, (s) => {
           playAgain(s);
         });

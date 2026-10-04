@@ -1,0 +1,3 @@
+{
+  "crons": [{ "path": "/api/gallery/archive", "schedule": "17 9 * * *" }]
+}

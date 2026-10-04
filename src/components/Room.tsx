@@ -26,6 +26,9 @@ import {
 import {
   api,
   haptic,
+  joiningChannel,
+  supabase,
+  type Joiner,
   getPlayerId,
   getSavedAvatar,
   getSavedName,
@@ -91,6 +94,8 @@ export default function Room({ roomId }: { roomId: string }) {
     { turn: number; word: string; drawerId: string; image: string }[] | null
   >(null);
   const [notFound, setNotFound] = useState(false);
+  const [showLastRoundBanner, setShowLastRoundBanner] = useState(false);
+  const [joining, setJoining] = useState<Joiner[]>([]);
 
   const canvasRef = useRef<CanvasHandle>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
@@ -104,6 +109,9 @@ export default function Room({ roomId }: { roomId: string }) {
   const prevPhaseKey = useRef("");
   const hintTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const lastTickSec = useRef(-1);
+  const lastRoundTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined
+  );
 
   useEffect(() => {
     setPlayerId(getPlayerId(roomId));
@@ -149,6 +157,9 @@ export default function Room({ roomId }: { roomId: string }) {
   const giver = state?.players.find((p) => p.id === state.giverId);
   const hasGuessed = !!state && !!playerId && state.guessedIds.includes(playerId);
   const isHost = !!state && state.hostId === playerId;
+  // draw-a-thon: nobody guesses, everybody draws the same word on their own
+  // board, and nothing they draw is sent to anyone until the round is over
+  const drawathon = state?.settings.mode === "drawathon";
 
   const applyState = useCallback((s: ClientState, keepPrivate = true) => {
     offsetRef.current = s.serverNow ? s.serverNow - Date.now() : offsetRef.current;
@@ -195,6 +206,7 @@ export default function Room({ roomId }: { roomId: string }) {
     const pid = playerIdRef.current;
     if (!st || !pid) return true;
     if (fromId === pid) return true;
+    if (st.settings.mode === "drawathon") return true;
     const stillGuessing =
       st.phase === "drawing" &&
       st.drawerId !== pid &&
@@ -272,7 +284,8 @@ export default function Room({ roomId }: { roomId: string }) {
         // the drawer answers; when a bot is drawing, the host holds the canvas
         const botDrawing = st?.players.find((p) => p.id === st.drawerId)?.isBot;
         const iAnswer =
-          st?.drawerId === pid || (botDrawing && st?.hostId === pid);
+          st?.settings.mode !== "drawathon" &&
+          (st?.drawerId === pid || (botDrawing && st?.hostId === pid));
         if (iAnswer && st.phase === "drawing") {
           ch.send({
             type: "broadcast",
@@ -305,7 +318,11 @@ export default function Room({ roomId }: { roomId: string }) {
         if (status === "SUBSCRIBED") {
           await ch.track({ online: true });
           const st = stateRef.current;
-          if (st?.phase === "drawing" && st.drawerId !== playerId) {
+          if (
+            st?.phase === "drawing" &&
+            st.drawerId !== playerId &&
+            st.settings.mode !== "drawathon"
+          ) {
             ch.send({ type: "broadcast", event: "sync_req", payload: { playerId } });
           }
         }
@@ -330,6 +347,39 @@ export default function Room({ roomId }: { roomId: string }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playerId, roomId]);
+
+  /**
+   * People sitting on the join screen still choosing a name and face. They
+   * announce themselves on a side channel (see JoinGate) so the lobby can show
+   * a greyed-out "joining…" chip before they are actually in the room.
+   */
+  const inLobby = state?.phase === "lobby";
+  useEffect(() => {
+    if (!playerId || !inLobby) {
+      setJoining([]);
+      return;
+    }
+    const ch = joiningChannel(roomId, playerId);
+    const sync = () => {
+      const list: Joiner[] = [];
+      for (const [key, metas] of Object.entries(ch.presenceState())) {
+        const m = metas[0] as unknown as Partial<Joiner> | undefined;
+        if (!m?.joining) continue;
+        list.push({
+          key,
+          joining: true,
+          name: String(m.name ?? "").slice(0, 20),
+          avatar: String(m.avatar ?? ""),
+        });
+      }
+      setJoining(list);
+    };
+    ch.on("presence", { event: "sync" }, sync);
+    ch.subscribe();
+    return () => {
+      supabase().removeChannel(ch);
+    };
+  }, [playerId, roomId, inLobby]);
 
   // --- bot driver -----------------------------------------------------------
   // The host's client runs the bots. This is deliberately LEVEL-triggered (a
@@ -581,7 +631,7 @@ export default function Room({ roomId }: { roomId: string }) {
   useEffect(() => {
     if (state?.phase !== "gameover") return;
     let live = true;
-    fetch(`/api/rooms/${roomId}/shots`)
+    const load = () => fetch(`/api/rooms/${roomId}/shots`)
       .then((r) => r.json())
       .then((j) => {
         if (!live) return;
@@ -612,8 +662,16 @@ export default function Room({ roomId }: { roomId: string }) {
         });
       })
       .catch(() => {});
+    load();
+    // in a draw-a-thon every phone uploads its last drawing at the same
+    // moment the game ends, so look again once the stragglers are in
+    const again =
+      stateRef.current?.settings.mode === "drawathon"
+        ? window.setTimeout(load, 4000)
+        : undefined;
     return () => {
       live = false;
+      window.clearTimeout(again);
     };
   }, [state?.phase, roomId]);
 
@@ -639,9 +697,14 @@ export default function Room({ roomId }: { roomId: string }) {
       announced.current.add(id);
       const p = state.players.find((x) => x.id === id);
       if (!p) continue;
+      // in a draw-a-thon guessedIds is "who has put their pen down"
+      if (state.settings.mode === "drawathon") {
+        if (p.id !== playerId) addSystem(`${p.name} is done!`);
+        continue;
+      }
       addMsg({ from: p.id, name: p.name, avatar: p.avatar, text: "", kind: "correct" });
     }
-  }, [state, turnKey, addMsg]);
+  }, [state, turnKey, addMsg, addSystem, playerId]);
 
   // announce roster changes: joins, disconnects, reconnects
   const rosterRef = useRef<Map<string, boolean> | null>(null);
@@ -750,6 +813,20 @@ export default function Room({ roomId }: { roomId: string }) {
     if (state.phase === "choosing") {
       canvasRef.current?.reset();
       reactionsThisTurn.current = 0;
+      // one player per turn, so turnIndex 0 is the very start of the round —
+      // flash it up on every screen before the first pick of the last go
+      // (a draw-a-thon round is a single turn, wherever the picker sits)
+      if (
+        (state.turnIndex === 0 || state.settings.mode === "drawathon") &&
+        state.round === state.totalRounds
+      ) {
+        clearTimeout(lastRoundTimer.current);
+        setShowLastRoundBanner(true);
+        lastRoundTimer.current = setTimeout(
+          () => setShowLastRoundBanner(false),
+          1800
+        );
+      }
       if (state.drawerId === playerId && !state.yourChoices) {
         api<{ state: ClientState }>(`/${roomId}?playerId=${playerId}`)
           .then(({ state: s }) => applyState(s, false))
@@ -765,7 +842,7 @@ export default function Room({ roomId }: { roomId: string }) {
           .then(({ state: s }) => applyState(s))
           .catch(() => {});
       }
-      if (state.drawerId !== playerId) {
+      if (state.drawerId !== playerId && state.settings.mode !== "drawathon") {
         // refresh mask at hint reveal moments
         const total = state.settings.drawSeconds * 1000;
         const serverNow = Date.now() + offsetRef.current;
@@ -785,7 +862,35 @@ export default function Room({ roomId }: { roomId: string }) {
       }
     }
 
-    if (state.phase === "reveal" && prevKey.startsWith("drawing")) {
+    if (
+      state.phase === "reveal" &&
+      prevKey.startsWith("drawing") &&
+      state.settings.mode === "drawathon"
+    ) {
+      // everyone uploads their own board; a blank one is not worth keeping
+      const lt = state.lastTurn;
+      const inked = (canvasRef.current?.inkFraction() ?? 0) > 0.002;
+      const snap = inked ? canvasRef.current?.snapshot() : null;
+      setLastShot(snap ?? null);
+      if (lt && !lt.skipped && snap) {
+        const keep = canvasRef.current?.snapshotKeep();
+        if (keep)
+          api(`/${roomId}`, { type: "shot", playerId, image: keep }).catch(
+            () => {}
+          );
+        const meNow = state.players.find((p) => p.id === playerId);
+        setGallery((g) => [
+          ...g,
+          {
+            word: lt.word,
+            drawerName: meNow?.name ?? "?",
+            drawerAvatar: meNow?.avatar ?? "a0",
+            dataUrl: snap,
+            reactions: 0,
+          },
+        ]);
+      }
+    } else if (state.phase === "reveal" && prevKey.startsWith("drawing")) {
       const snap = canvasRef.current?.snapshot();
       setLastShot(snap ?? null);
       const lt = state.lastTurn;
@@ -795,9 +900,9 @@ export default function Room({ roomId }: { roomId: string }) {
         !!lt && !lt.skipped &&
         (lt.drawerId === playerId || (artist?.isBot && state.hostId === playerId));
       if (iUpload) {
-        const small = canvasRef.current?.snapshotSmall();
-        if (small)
-          api(`/${roomId}`, { type: "shot", playerId, image: small }).catch(
+        const keep = canvasRef.current?.snapshotKeep();
+        if (keep)
+          api(`/${roomId}`, { type: "shot", playerId, image: keep }).catch(
             () => {}
           );
       }
@@ -850,7 +955,14 @@ export default function Room({ roomId }: { roomId: string }) {
       const amGiver = !!st.giverId && st.giverId === pid;
       const solved = st.guessedIds.includes(pid);
 
-      if (st.phase === "drawing" && !amDrawer && !amGiver && !solved) {
+      const drawathonNow = st.settings.mode === "drawathon";
+      if (
+        st.phase === "drawing" &&
+        !drawathonNow &&
+        !amDrawer &&
+        !amGiver &&
+        !solved
+      ) {
         addMsg({ ...base, text, kind: "guess" });
         try {
           const { result, state: s } = await api<{
@@ -888,7 +1000,8 @@ export default function Room({ roomId }: { roomId: string }) {
       // drawer / players who already solved it / the giver / lobby chatter.
       // Only the first two are hushed: their chatter is shown to people who
       // already know the word, so a stray "nearly!" can't hand it over.
-      const guessedOnly = st.phase === "drawing" && (amDrawer || solved);
+      const guessedOnly =
+        st.phase === "drawing" && !drawathonNow && (amDrawer || solved);
       addMsg({ ...base, text, kind: guessedOnly ? "whisper" : "guess" });
       channelRef.current?.send({
         type: "broadcast",
@@ -951,6 +1064,12 @@ export default function Room({ roomId }: { roomId: string }) {
   function kick(targetId: string, name: string) {
     api(`/${roomId}`, { type: "kick", playerId, targetId })
       .then(() => addSystem(`${name} was removed from the room`))
+      .catch(() => {});
+  }
+
+  function markDone() {
+    api<{ state: ClientState }>(`/${roomId}`, { type: "done", playerId })
+      .then(({ state: s }) => applyState(s))
       .catch(() => {});
   }
 
@@ -1029,19 +1148,26 @@ export default function Room({ roomId }: { roomId: string }) {
     : landscape
     ? "tl"
     : "tp";
-  const canType = isTouch && !(isDrawer && drawing);
+  /** am I holding a pen right now — the drawer, or everybody in a draw-a-thon */
+  const iDraw = drawing && (isDrawer || drawathon);
+  // a draw-a-thon has nothing to guess, so phones don't need a keyboard up
+  const canType = isTouch && !iDraw && !drawathon;
   const showKeyboard = canType && kbMode === "app";
   const showNativeBar = canType && kbMode === "device";
 
   const placeholder =
-    isDrawer || isGiver || hasGuessed ? "say something…" : "type your guess…";
+    isDrawer || isGiver || hasGuessed || drawathon
+      ? "say something…"
+      : "type your guess…";
   /**
    * The word's shape, handed to the inputs so a finished guess can send itself
    * without Enter. Only for people who are actually guessing: the drawer and
    * the giver already know the word, and anyone who has solved it is chatting.
    */
   const guessShape =
-    drawing && !isDrawer && !isGiver && !hasGuessed ? state.wordLen : undefined;
+    drawing && !drawathon && !isDrawer && !isGiver && !hasGuessed
+      ? state.wordLen
+      : undefined;
 
   function submitDraft() {
     const t = draft.trim();
@@ -1115,9 +1241,24 @@ export default function Room({ roomId }: { roomId: string }) {
             onSettings={patchSettings}
             onKick={kick}
             onRename={renameMe}
+            joining={joining}
           />
         )}
-        {state.phase === "gameover" && (
+        {state.phase === "gameover" && drawathon && (
+          <DrawathonReview
+            state={state}
+            meId={playerId}
+            isHost={isHost}
+            shots={shots}
+            local={gallery}
+            onAgain={() => {
+              setGallery([]);
+              setShots(null);
+              api(`/${roomId}`, { type: "again", playerId }).catch(() => {});
+            }}
+          />
+        )}
+        {state.phase === "gameover" && !drawathon && (
           <GameOver
             state={state}
             meId={playerId}
@@ -1171,16 +1312,51 @@ export default function Room({ roomId }: { roomId: string }) {
         )}
       </div>
     </div>
-  ) : state.phase === "reveal" && state.lastTurn ? (
+  ) : drawathon && state.phase === "reveal" && state.lastTurn ? (
+      <DrawathonReveal state={state} shot={lastShot} />
+    ) : state.phase === "reveal" && state.lastTurn ? (
       <RevealPhoto state={state} shot={lastShot} />
+    ) : drawathon && state.phase === "choosing" ? (
+      <div className="dd-frost absolute inset-0 flex items-center justify-center rounded-2xl">
+        {isDrawer ? (
+          <GiveWord
+            choices={state.yourChoices}
+            tiers={state.yourChoiceTiers}
+            title={
+              state.players.filter((p) => p.connected).length > 1
+                ? "What should everyone draw?"
+                : "What do you want to draw?"
+            }
+            note={`Drawing ${state.round} of ${state.totalRounds}`}
+            timeLeft={timeLeft}
+            onSend={(body) =>
+              api<{ state: ClientState }>(`/${roomId}`, {
+                playerId,
+                ...body,
+              }).then(({ state: s }) => applyState(s, false))
+            }
+          />
+        ) : (
+          <div className="mx-3 rounded-2xl border-2 border-ink bg-white px-4 py-3 text-center font-display text-sm shadow-doodle sm:text-lg">
+            <PlayerAvatar token={drawer?.avatar ?? ""} size={24} />{" "}
+            {drawer?.name} is picking what everyone draws
+            <span className="animate-pulse">…</span>
+          </div>
+        )}
+      </div>
     ) : state.phase === "choosing" ? (
       <div className="dd-frost absolute inset-0 flex items-center justify-center rounded-2xl">
         {isGiver ? (
           <GiveWord
             choices={state.yourChoices}
             tiers={state.yourChoiceTiers}
-            drawerName={drawer?.name ?? "the drawer"}
-            drawerAvatar={drawer?.avatar ?? ""}
+            title={
+              <>
+                <PlayerAvatar token={drawer?.avatar ?? ""} size={22} /> Give{" "}
+                {drawer?.name ?? "the drawer"} a word
+              </>
+            }
+            note="You sit this turn out — no points, but you get to watch them suffer."
             timeLeft={timeLeft}
             onSend={(body) =>
               api<{ state: ClientState }>(`/${roomId}`, {
@@ -1386,6 +1562,8 @@ export default function Room({ roomId }: { roomId: string }) {
             )}
           </div>
 
+          {!drawathon && (
+          <>
           <div className="mt-2 text-[11px] font-bold text-ink/50">
             Words come from (next turn)
           </div>
@@ -1409,6 +1587,8 @@ export default function Room({ roomId }: { roomId: string }) {
               </button>
             ))}
           </div>
+          </>
+          )}
 
           <div className="mt-2 text-[11px] font-bold text-ink/50">Rounds</div>
           <div className="mt-1 flex gap-1">
@@ -1433,6 +1613,7 @@ export default function Room({ roomId }: { roomId: string }) {
   );
 
   const addBotButton = isHost &&
+    !drawathon &&
     state.players.filter((p) => p.isBot).length < 3 && (
       <button
         onClick={() =>
@@ -1448,7 +1629,7 @@ export default function Room({ roomId }: { roomId: string }) {
   // (kept in the layout with `invisible` so the board doesn't resize)
   const chrome = state.phase === "reveal" ? "invisible" : "";
 
-  const hintButton = drawing && !isDrawer && !isGiver && !hasGuessed && (
+  const hintButton = drawing && !drawathon && !isDrawer && !isGiver && !hasGuessed && (
     <button
       onClick={() =>
         api<{ state: ClientState }>(`/${roomId}`, {
@@ -1522,12 +1703,22 @@ export default function Room({ roomId }: { roomId: string }) {
    * the column to stay flexible.
    */
   const boardCap =
-    isDrawer && drawing
+    iDraw
       ? undefined
       : { maxHeight: "calc((100vw - 1.5rem) * 0.75)" };
 
   /** never so short that the chat is a sliver, never so tall it eats the board */
   const feedFloor = { minHeight: `clamp(56px, ${sh(12)}, 140px)` };
+
+  // fixed to the viewport, not the board, so it lands center-screen the same
+  // way on every layout without duplicating its markup per branch
+  const lastRoundBanner = showLastRoundBanner && (
+    <div className="pointer-events-none fixed inset-0 z-[60] flex items-center justify-center">
+      <div className="dd-last-round rounded-2xl border-2 border-ink bg-coral px-7 py-4 text-center font-display text-2xl font-black text-white shadow-doodle sm:text-3xl">
+        Last round!
+      </div>
+    </div>
+  );
 
   if (layout === "desktop") {
     // Desktop: the board is the point. A narrow roster rail on the left, the
@@ -1535,16 +1726,18 @@ export default function Room({ roomId }: { roomId: string }) {
     // box directly under the board where your eyes already are.
     return (
       <div className="dd-game dd-nosel mx-auto flex w-full max-w-[1500px] flex-col gap-2 px-3 py-2">
+        {lastRoundBanner}
         {header}
         <WordBar
           state={state}
           isDrawer={isDrawer}
+          drawathon={drawathon}
           isGiver={isGiver}
           hasGuessed={hasGuessed}
           timeLeft={timeLeft}
           isHost={isHost}
           onSkip={skipTurnAsHost}
-          onPass={passTurn}
+          onPass={drawathon ? markDone : passTurn}
           offsetMs={offsetRef.current}
         />
         <main className="flex min-h-0 flex-1 gap-3">
@@ -1564,8 +1757,8 @@ export default function Room({ roomId }: { roomId: string }) {
             <div className="flex min-h-0 w-full flex-1">
               <Canvas
                 ref={canvasRef}
-                channel={channelRef.current}
-                canDraw={isDrawer && drawing}
+                channel={drawathon ? null : channelRef.current}
+                canDraw={iDraw}
                 overlay={canvasOverlay}
               />
             </div>
@@ -1609,11 +1802,12 @@ export default function Room({ roomId }: { roomId: string }) {
     // roster and keyboard stack in a side column instead of eating rows
     return (
       <div className="dd-game dd-nosel flex w-full flex-row gap-2 px-3 py-2.5 pb-[max(0.65rem,env(safe-area-inset-bottom))]">
+        {lastRoundBanner}
         <section className="relative flex min-h-0 flex-1 flex-col">
           <Canvas
             ref={canvasRef}
-            channel={channelRef.current}
-            canDraw={isDrawer && drawing}
+            channel={drawathon ? null : channelRef.current}
+            canDraw={iDraw}
             overlay={canvasOverlay}
           />
           {kbOpen && <Ticker messages={msgs} />}
@@ -1628,12 +1822,13 @@ export default function Room({ roomId }: { roomId: string }) {
           <WordBar
             state={state}
             isDrawer={isDrawer}
+            drawathon={drawathon}
             isGiver={isGiver}
             hasGuessed={hasGuessed}
             timeLeft={timeLeft}
             isHost={isHost}
             onSkip={skipTurnAsHost}
-            onPass={passTurn}
+            onPass={drawathon ? markDone : passTurn}
             offsetMs={offsetRef.current}
             compact
           />
@@ -1683,16 +1878,18 @@ export default function Room({ roomId }: { roomId: string }) {
 
   return (
     <div className="dd-game dd-nosel mx-auto flex w-full max-w-6xl flex-col gap-1 px-3 pt-2 pb-[max(0.65rem,env(safe-area-inset-bottom))]">
+      {lastRoundBanner}
       {!kbOpen && header}
       <WordBar
         state={state}
         isDrawer={isDrawer}
+        drawathon={drawathon}
         isGiver={isGiver}
         hasGuessed={hasGuessed}
         timeLeft={timeLeft}
         isHost={isHost}
         onSkip={skipTurnAsHost}
-        onPass={passTurn}
+        onPass={drawathon ? markDone : passTurn}
         offsetMs={offsetRef.current}
         compact
       />
@@ -1714,8 +1911,8 @@ export default function Room({ roomId }: { roomId: string }) {
         >
           <Canvas
             ref={canvasRef}
-            channel={channelRef.current}
-            canDraw={isDrawer && drawing}
+            channel={drawathon ? null : channelRef.current}
+            canDraw={iDraw}
             overlay={canvasOverlay}
           />
           {kbOpen && <Ticker messages={msgs} />}
@@ -1935,15 +2132,15 @@ function TimeFill({
 function GiveWord({
   choices,
   tiers,
-  drawerName,
-  drawerAvatar,
+  title,
+  note,
   timeLeft,
   onSend,
 }: {
   choices?: string[];
   tiers?: string[];
-  drawerName: string;
-  drawerAvatar: string;
+  title: React.ReactNode;
+  note: string;
   timeLeft: number;
   onSend: (body: Record<string, unknown>) => Promise<unknown>;
 }) {
@@ -1964,12 +2161,10 @@ function GiveWord({
   return (
     <div className="mx-3 w-[min(92vw,26rem)] rounded-2xl border-2 border-ink bg-white p-3 text-center shadow-doodle">
       <div className="font-display text-base sm:text-lg">
-        <PlayerAvatar token={drawerAvatar} size={22} /> Give {drawerName} a word
+        {title}
         <span className="ml-1 text-ink/45">({timeLeft}s)</span>
       </div>
-      <p className="mt-0.5 text-[11px] text-ink/55">
-        You sit this turn out — no points, but you get to watch them suffer.
-      </p>
+      <p className="mt-0.5 text-[11px] text-ink/55">{note}</p>
 
       <form
         onSubmit={(e) => {
@@ -2117,6 +2312,7 @@ function EditMe({
 function WordBar({
   state,
   isDrawer,
+  drawathon,
   isGiver,
   hasGuessed,
   timeLeft,
@@ -2128,6 +2324,7 @@ function WordBar({
 }: {
   state: ClientState;
   isDrawer: boolean;
+  drawathon?: boolean;
   isGiver: boolean;
   hasGuessed: boolean;
   timeLeft: number;
@@ -2147,7 +2344,21 @@ function WordBar({
   const urgent = state.phase === "drawing" && timeLeft <= 10;
 
   let content: React.ReactNode = null;
-  if (state.phase === "drawing") {
+  if (drawathon && state.phase === "drawing") {
+    content = (
+      <span className="font-display tracking-wide" style={{ fontSize: `clamp(12px, ${sh(2.0)}, 20px)` }}>
+        <IconBrush size={22} /> {hasGuessed ? "Done! " : "Everyone draw: "}
+        <span className="font-bold">{state.yourWord ?? "…"}</span>
+      </span>
+    );
+  } else if (drawathon && state.phase === "reveal") {
+    content = (
+      <span className="font-display" style={{ fontSize: `clamp(12px, ${sh(2.0)}, 20px)` }}>
+        Pens down!{" "}
+        <span className="font-bold text-coral">{state.lastTurn?.word}</span>
+      </span>
+    );
+  } else if (state.phase === "drawing") {
     // the giver wrote the word, so there is nothing left to hide from them —
     // they watch the room flail at their handiwork
     if (isDrawer || isGiver || hasGuessed) {
@@ -2219,7 +2430,16 @@ function WordBar({
       <div className="relative flex items-center justify-between gap-2">
         {content}
         <span className="flex items-center gap-1.5">
-          {isDrawer && state.phase === "drawing" && onPass && (
+          {drawathon && state.phase === "drawing" && !hasGuessed && onPass && (
+            <button
+              onClick={onPass}
+              title="I'm finished with this one"
+              className="rounded-lg border-2 border-ink bg-mint px-2 py-0.5 text-[11px] font-bold shadow-doodle transition-transform active:scale-95"
+            >
+              <IconCheck size={13} /> done
+            </button>
+          )}
+          {!drawathon && isDrawer && state.phase === "drawing" && onPass && (
             <button
               onClick={onPass}
               title="End my turn now"
@@ -2256,6 +2476,46 @@ function WordBar({
           </span>
         </span>
       </div>
+    </div>
+  );
+}
+
+/** Draw-a-thon: no scores to show, just your own drawing and what's next. */
+function DrawathonReveal({
+  state,
+  shot,
+}: {
+  state: ClientState;
+  shot: string | null;
+}) {
+  const lt = state.lastTurn!;
+  const last = state.round >= state.totalRounds;
+  return (
+    <div className="dd-frost absolute inset-0 flex items-center justify-center overflow-hidden rounded-2xl p-2 sm:p-3">
+      <figure className="dd-polaroid flex max-h-full min-h-0 w-full max-w-[420px] flex-col">
+        {shot ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={shot}
+            alt={lt.word}
+            className="min-h-0 flex-1 rounded-md border border-ink/10 object-contain"
+          />
+        ) : (
+          <div className="flex min-h-0 flex-1 items-center justify-center rounded-md border border-ink/10 px-8 py-6 text-ink/30">
+            {lt.skipped ? "skipped" : "nothing drawn"}
+          </div>
+        )}
+        <figcaption className="shrink-0 px-1 pt-2 text-center leading-tight">
+          <span className="font-display text-base text-coral sm:text-lg">
+            {lt.word || "—"}
+          </span>
+          <div className="mt-1 text-[11px] text-ink/55">
+            {last
+              ? "That was the last one — time to see everyone's!"
+              : `Next drawing coming up… (${state.round}/${state.totalRounds})`}
+          </div>
+        </figcaption>
+      </figure>
     </div>
   );
 }
@@ -2403,6 +2663,7 @@ function Lobby({
   onSettings,
   onKick,
   onRename,
+  joining,
 }: {
   state: ClientState;
   meId: string;
@@ -2415,8 +2676,14 @@ function Lobby({
   onSettings: (patch: Record<string, unknown>) => void;
   onKick: (id: string, name: string) => void;
   onRename: (name: string, avatar: string) => Promise<unknown>;
+  joining: Joiner[];
 }) {
-  const canStart = state.players.filter((p) => p.connected).length >= 2;
+  const drawathon = state.settings.mode === "drawathon";
+  const here = state.players.filter((p) => p.connected);
+  // a draw-a-thon is fine on your own; bots never take part in one
+  const canStart = drawathon
+    ? here.some((p) => !p.isBot)
+    : here.length >= 2;
   const me = state.players.find((p) => p.id === meId);
   const [editing, setEditing] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
@@ -2442,9 +2709,13 @@ function Lobby({
   return (
     <div className="mx-auto mt-4 max-w-lg">
       <div className="rounded-2xl border-2 border-ink bg-white p-6 shadow-doodle">
-        <h2 className="font-display text-xl">The gang assembles…</h2>
+        <h2 className="font-display text-xl">
+          {drawathon ? "Draw-a-thon 🖍️" : "The gang assembles…"}
+        </h2>
         <p className="mt-1 text-xs text-ink/60">
-          Send friends the link — they click, type a name, and they&apos;re in.
+          {drawathon
+            ? "Everyone draws the same thing, then you look at them all together at the end. Invite friends with the link, or just start on your own."
+            : "Send friends the link — they click, type a name, and they’re in."}
         </p>
         <div className="mt-3 rounded-xl bg-sun/35 px-3 py-2 text-center">
           <div className="text-[11px] font-bold uppercase tracking-wider text-ink/40">
@@ -2534,7 +2805,22 @@ function Lobby({
             </span>
             );
           })}
-          {isHost && state.players.filter((p) => p.isBot).length < 3 && (
+          {joining.map((j) => (
+            <span
+              key={j.key}
+              title="Still choosing a name — about to join"
+              className="flex items-center gap-1.5 rounded-xl border-2 border-dashed border-ink/20 bg-paper px-3 py-1.5 font-bold text-ink/45 grayscale"
+            >
+              <span className="opacity-50">
+                <PlayerAvatar token={j.avatar || "a0"} size={26} />
+              </span>
+              {j.name || "Someone"}
+              <span className="animate-pulse text-[10px] font-extrabold uppercase tracking-wide">
+                joining…
+              </span>
+            </span>
+          ))}
+          {isHost && !drawathon && state.players.filter((p) => p.isBot).length < 3 && (
             <button
               onClick={() =>
                 api(`/${roomId}`, { type: "addbot", playerId: meId }).catch(() => {})
@@ -2548,6 +2834,41 @@ function Lobby({
 
         {isHost ? (
           <>
+            <div className="mt-5">
+              <span className="text-xs font-bold">Game</span>
+              <div className="mt-1 grid grid-cols-2 gap-1.5">
+                {(
+                  [
+                    { key: "classic", label: "Draw & guess", sub: "take turns, score points" },
+                    { key: "drawathon", label: "Draw-a-thon", sub: "everyone draws, no guessing" },
+                  ] as const
+                ).map((o) => {
+                  const active = (state.settings.mode ?? "classic") === o.key;
+                  return (
+                    <button
+                      key={o.key}
+                      onClick={() => onSettings({ mode: o.key })}
+                      className={`rounded-xl border-2 px-2 py-2 text-center transition-all ${
+                        active
+                          ? "border-ink bg-sun shadow-doodle"
+                          : "border-ink/15 bg-paper hover:border-ink/40"
+                      }`}
+                    >
+                      <span className="block font-display font-bold leading-tight">
+                        {o.label}
+                      </span>
+                      <span className="block text-[11px] text-ink/50">{o.sub}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {drawathon && state.players.some((p) => p.isBot) && (
+                <p className="mt-1.5 text-[11px] text-ink/55">
+                  Bots sit draw-a-thons out — they&apos;ll leave when you start.
+                </p>
+              )}
+            </div>
+
             <div className="mt-5">
               <span className="text-xs font-bold">Difficulty</span>
               <div className="mt-1 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
@@ -2601,6 +2922,7 @@ function Lobby({
               )}
             </div>
 
+            {!drawathon && (
             <div className="mt-5">
               <span className="text-xs font-bold">Where words come from</span>
               <div className="mt-1 grid grid-cols-2 gap-1.5">
@@ -2648,6 +2970,7 @@ function Lobby({
                 </p>
               )}
             </div>
+            )}
 
             <div className="mt-3">
               <span className="text-xs font-bold">Themes</span>
@@ -2696,7 +3019,9 @@ function Lobby({
 
             <div className="mt-3 grid grid-cols-2 gap-3">
               <div>
-                <span className="text-xs font-bold">Rounds</span>
+                <span className="text-xs font-bold">
+                  {drawathon ? "Drawings" : "Rounds"}
+                </span>
                 <div className="mt-1 flex gap-1.5">
                   {[3, 5, 10].map((n) => (
                     <button
@@ -2789,7 +3114,11 @@ function Lobby({
               className="btn-primary mt-4 w-full disabled:opacity-40"
             >
               {canStart ? (
-                <>Start the disaster! <IconRocket size={18} /></>
+                drawathon ? (
+                  <>Start drawing! <IconRocket size={18} /></>
+                ) : (
+                  <>Start the disaster! <IconRocket size={18} /></>
+                )
               ) : (
                 "Waiting for at least 2 players…"
               )}
@@ -2798,7 +3127,9 @@ function Lobby({
         ) : (
           <>
             <p className="mt-4 text-center text-xs text-ink/50">
-              {state.settings.rounds} round{state.settings.rounds > 1 ? "s" : ""} ·{" "}
+              {drawathon && <>Draw-a-thon · </>}
+              {state.settings.rounds} {drawathon ? "drawing" : "round"}
+              {state.settings.rounds > 1 ? "s" : ""} ·{" "}
               {state.settings.drawSeconds}s draws ·{" "}
               {(state.settings.difficulty ?? "medium") === "ultra" ? (
                 <b className="text-coral">INSANITY</b>
@@ -2914,6 +3245,137 @@ function GameOver({
   );
 }
 
+/**
+ * The point of a draw-a-thon: every round's drawings side by side, in the
+ * order they were drawn.
+ */
+function DrawathonReview({
+  state,
+  meId,
+  isHost,
+  shots,
+  local,
+  onAgain,
+}: {
+  state: ClientState;
+  meId: string;
+  isHost: boolean;
+  shots: { turn: number; word: string; drawerId: string; image: string }[] | null;
+  local: GalleryItem[];
+  onAgain: () => void;
+}) {
+  const [zoom, setZoom] = useState<{ src: string; word: string; who: string } | null>(null);
+  const rounds = useMemo(() => {
+    const byRound = new Map<
+      number,
+      { word: string; items: { src: string; name: string; avatar: string; mine: boolean }[] }
+    >();
+    if (shots && shots.length) {
+      for (const sh of shots) {
+        const r = Math.floor(sh.turn / 1000);
+        const p = state.players.find((x) => x.id === sh.drawerId);
+        const g = byRound.get(r) ?? { word: sh.word, items: [] };
+        g.items.push({
+          src: sh.image,
+          name: p?.name ?? "?",
+          avatar: p?.avatar ?? "a0",
+          mine: sh.drawerId === meId,
+        });
+        byRound.set(r, g);
+      }
+    } else {
+      // the server copy hasn't arrived (yet) — at least show my own
+      local.forEach((g, i) =>
+        byRound.set(i + 1, {
+          word: g.word,
+          items: [{ src: g.dataUrl, name: g.drawerName, avatar: g.drawerAvatar, mine: true }],
+        })
+      );
+    }
+    return [...byRound.entries()].sort((a, b) => a[0] - b[0]);
+  }, [shots, local, state.players, meId]);
+
+  return (
+    <div className="mx-auto mt-4 max-w-4xl">
+      <Confetti />
+      <div className="rounded-2xl border-2 border-ink bg-white p-5 text-center shadow-doodle sm:p-6">
+        <h2 className="font-display text-2xl">
+          <IconGallery size={28} /> The draw-a-thon gallery
+        </h2>
+        <p className="mt-1 text-xs text-ink/55">
+          {rounds.length} drawing{rounds.length === 1 ? "" : "s"} — tap any to
+          see it big.
+        </p>
+        {isHost ? (
+          <button onClick={onAgain} className="btn-primary mt-4">
+            Draw some more <IconReplay size={18} />
+          </button>
+        ) : (
+          <p className="mt-4 animate-pulse text-ink/50">
+            Waiting for the host to start another…
+          </p>
+        )}
+      </div>
+
+      {rounds.length === 0 && (
+        <p className="mt-6 text-center text-sm text-ink/50">
+          Nothing was drawn this time!
+        </p>
+      )}
+
+      {rounds.map(([r, g]) => (
+        <section
+          key={r}
+          className="mt-4 rounded-2xl border-2 border-ink bg-white p-4 shadow-doodle sm:p-5"
+        >
+          <h3 className="font-display text-lg">
+            <span className="mr-2 rounded-lg bg-sun px-2 py-0.5 text-sm">#{r}</span>
+            {g.word}
+          </h3>
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {g.items.map((it, i) => (
+              <figure
+                key={i}
+                className={`cursor-zoom-in rounded-xl border-2 bg-paper p-2 ${
+                  it.mine ? "border-ink" : "border-ink/15"
+                }`}
+                onClick={() => setZoom({ src: it.src, word: g.word, who: it.name })}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={it.src}
+                  alt={`${g.word} by ${it.name}`}
+                  className="w-full rounded-lg border border-ink/10 bg-white"
+                />
+                <figcaption className="mt-1 text-center text-[11px] font-bold">
+                  <PlayerAvatar token={it.avatar} size={15} /> {it.name}
+                  {it.mine && <span className="font-normal text-ink/40"> (you)</span>}
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+        </section>
+      ))}
+
+      {zoom && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-4"
+          onClick={() => setZoom(null)}
+        >
+          <figure className="dd-polaroid max-h-full w-full max-w-2xl">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={zoom.src} alt={zoom.word} className="w-full rounded-md" />
+            <figcaption className="pt-2 text-center font-display">
+              <span className="text-coral">{zoom.word}</span>{" "}
+              <span className="text-sm text-ink/55">by {zoom.who}</span>
+            </figcaption>
+          </figure>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Confetti() {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
@@ -2983,6 +3445,28 @@ function JoinGate({
     setAvatar(getSavedAvatar());
   }, []);
 
+  // show up in the lobby, greyed out, while still deciding who to be
+  const presence = useRef<RealtimeChannel | null>(null);
+  const live = useRef({ name: "", avatar: "" });
+  live.current = { name: name.trim(), avatar };
+  useEffect(() => {
+    const ch = joiningChannel(roomId, `j-${crypto.randomUUID()}`);
+    presence.current = ch;
+    ch.subscribe((status) => {
+      if (status === "SUBSCRIBED") ch.track({ joining: true, ...live.current });
+    });
+    return () => {
+      presence.current = null;
+      supabase().removeChannel(ch);
+    };
+  }, [roomId]);
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      presence.current?.track({ joining: true, name: name.trim(), avatar });
+    }, 350);
+    return () => window.clearTimeout(t);
+  }, [name, avatar]);
+
   async function join(e: React.FormEvent) {
     e.preventDefault();
     const n = name.trim();
@@ -2997,6 +3481,11 @@ function JoinGate({
       saveName(n);
       saveAvatar(avatar);
       recordGame({ roomId, playerId: res.playerId, name: n, avatar });
+      // let go of the side channel before the room opens its own on the
+      // same topic, or supabase-js would hand the closing one back
+      const ch = presence.current;
+      presence.current = null;
+      if (ch) await supabase().removeChannel(ch).catch(() => {});
       onJoined(res.playerId, res.state);
     } catch (err) {
       const msg = (err as Error).message;

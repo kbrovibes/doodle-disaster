@@ -15,7 +15,8 @@ export async function GET(_req: Request, { params }: Params) {
       .select("turn, word, drawer_id, image")
       .eq("room_id", id.toLowerCase())
       .order("turn", { ascending: true })
-      .limit(24);
+      // a draw-a-thon keeps one per player per round
+      .limit(120);
     if (error) throw new RoomError(error.message, 500);
     return NextResponse.json({
       shots: (data ?? []).map((r) => ({

@@ -98,9 +98,14 @@ export async function POST(req: NextRequest) {
           .filter((k) => known.has(k))
           .slice(0, 12)
       : [];
+    const drawathon = body.mode === "drawathon";
     const state = newRoom(
       player,
-      themePacks.length ? { themePacks } : undefined,
+      {
+        ...(themePacks.length ? { themePacks } : {}),
+        // a draw-a-thon is mostly for little ones, so it starts on KIDS words
+        ...(drawathon ? { mode: "drawathon" as const, difficulty: "kids" as const } : {}),
+      },
       { salt: Number.isFinite(salt) ? salt >>> 0 : undefined, cursor }
     );
 

@@ -24,7 +24,15 @@ export interface Settings {
    * another player each turn — see giverFor() in engine.ts.
    */
   wordSource?: "bank" | "giver";
+  /**
+   * "classic" is draw-and-guess. "drawathon" has no guessing at all: every
+   * round one player picks a word, everybody draws it on their own board, and
+   * the drawings are laid side by side at the end. Playable solo.
+   */
+  mode?: GameMode;
 }
+
+export type GameMode = "classic" | "drawathon";
 
 /** Full server-side state, stored in Postgres. Never sent raw to clients. */
 export interface RoomState {
@@ -48,7 +56,8 @@ export interface RoomState {
   wordChoiceTiers?: string[];
   word: string | null; // secret
   phaseEndsAt: number; // epoch ms
-  guessed: Record<string, number>; // playerId -> points earned this turn
+  /** playerId -> points earned this turn; in a draw-a-thon, who has hit "done" */
+  guessed: Record<string, number>;
   personalHints?: Record<string, number[]>; // playerId -> extra revealed letter indices (this turn)
   drawerPoints: number;
   usedWords: string[];

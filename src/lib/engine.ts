@@ -12,6 +12,12 @@ export const REVEAL_SECONDS = 6;
 /** nothing was drawn, so there is nothing to linger on */
 export const SKIP_REVEAL_SECONDS = 2;
 export const ADVANCE_GRACE_MS = 1500;
+/** a draw-a-thon reveal is just "pens down" while everyone's drawing uploads */
+export const DRAWATHON_REVEAL_SECONDS = 4;
+
+export function isDrawathon(state: { settings: Settings }): boolean {
+  return state.settings.mode === "drawathon";
+}
 
 /**
  * The ring this room walks. Fixed for the life of the room (the old version
@@ -72,7 +78,7 @@ export function newRoom(
  * A turn therefore degrades to the classic game rather than stalling.
  */
 export function giverFor(state: RoomState, drawerId: string): string | null {
-  if (state.settings.wordSource !== "giver") return null;
+  if (state.settings.wordSource !== "giver" || isDrawathon(state)) return null;
   const drawer = state.players.find((p) => p.id === drawerId);
   if (!drawer || drawer.isBot) return null;
   if (state.players.filter((p) => p.connected).length < 3) return null;
@@ -120,6 +126,8 @@ export const BOT_ROSTER = [
 
 export function addBot(state: RoomState): Player {
   if (state.phase === "gameover") throw new GameError("Game is over");
+  if (isDrawathon(state))
+    throw new GameError("Bots can't join a draw-a-thon");
   const bots = state.players.filter((p) => p.isBot);
   if (bots.length >= BOT_ROSTER.length)
     throw new GameError(`Max ${BOT_ROSTER.length} bots`);
@@ -148,6 +156,20 @@ export function removeBot(state: RoomState, botId: string): void {
 }
 
 export function startGame(state: RoomState, now: number): void {
+  if (isDrawathon(state)) {
+    // bots only know how to draw their own little repertoire, so they sit
+    // this one out entirely
+    state.players = state.players.filter((p) => !p.isBot);
+    const here = state.players.filter((p) => p.connected);
+    if (here.length < 1) throw new GameError("Need at least one player");
+    state.players.forEach((p) => (p.score = 0));
+    state.order = shuffle(here.map((p) => p.id));
+    state.round = 1;
+    state.turnIndex = 0;
+    state.lastTurn = null;
+    beginChoosing(state, now);
+    return;
+  }
   const connected = state.players.filter((p) => p.connected);
   const humans = connected.filter((p) => !p.isBot);
   if (connected.length < 2) throw new GameError("Need at least 2 players");
@@ -235,8 +257,11 @@ export function giveWord(
   now: number
 ): void {
   if (state.phase !== "choosing") throw new GameError("Not choosing");
-  if (!state.giverId) throw new GameError("Nobody is giving words this turn");
-  if (playerId !== state.giverId) throw new GameError("Not your word to give");
+  // in a draw-a-thon whoever is picking may name anything they like
+  const picker =
+    state.giverId ?? (isDrawathon(state) ? state.drawerId : null);
+  if (!picker) throw new GameError("Nobody is giving words this turn");
+  if (playerId !== picker) throw new GameError("Not your word to give");
   const word = cleanGivenWord(raw);
   if (!word)
     throw new GameError("Letters and spaces only, up to four words");
@@ -269,6 +294,7 @@ export function handleGuess(
   const player = state.players.find((p) => p.id === playerId);
   if (!player) throw new GameError("Unknown player");
   if (state.phase !== "drawing" || !state.word) return "chat";
+  if (isDrawathon(state)) return "chat"; // everybody knows the word
   // the clock is authoritative: a guess after time's up scores nothing and
   // instead resolves the overdue turn (serverless — no background timer)
   if (now > state.phaseEndsAt + ADVANCE_GRACE_MS) {
@@ -310,7 +336,36 @@ export function handleGuess(
   return isClose(text, state.word) ? "close" : "wrong";
 }
 
+/** Draw-a-thon: "I'm finished" — the round ends once everyone here is. */
+export function markDone(state: RoomState, playerId: string, now: number): void {
+  if (!isDrawathon(state)) throw new GameError("Not a draw-a-thon");
+  if (state.phase !== "drawing") throw new GameError("Not drawing right now");
+  if (!state.order.includes(playerId)) throw new GameError("Unknown player");
+  state.guessed[playerId] = 0;
+  if (everyoneDone(state)) endTurn(state, now, false);
+}
+
+function everyoneDone(state: RoomState): boolean {
+  const here = state.players.filter(
+    (p) => p.connected && state.order.includes(p.id)
+  );
+  return here.length > 0 && here.every((p) => state.guessed[p.id] !== undefined);
+}
+
 function endTurn(state: RoomState, now: number, skipped: boolean): void {
+  if (isDrawathon(state)) {
+    state.lastTurn = {
+      word: state.word ?? "",
+      drawerId: state.drawerId ?? "",
+      deltas: {},
+      everyoneGuessed: false,
+      skipped,
+    };
+    state.phase = "reveal";
+    state.phaseEndsAt =
+      now + (skipped ? SKIP_REVEAL_SECONDS : DRAWATHON_REVEAL_SECONDS) * 1000;
+    return;
+  }
   const word = state.word ?? "";
   const drawer = state.players.find((p) => p.id === state.drawerId);
   // the giver is out of the running by design, so they must not count toward
@@ -351,6 +406,12 @@ export function advance(state: RoomState, now: number): void {
         (p) => p.id === state.drawerId && p.connected
       );
       if (now + ADVANCE_GRACE_MS < state.phaseEndsAt && !drawerGone) return;
+      // a draw-a-thon never forfeits a round: everybody else is waiting to
+      // draw, so whoever dithered simply gets the first word dealt
+      if (isDrawathon(state) && state.wordChoices.length) {
+        beginDrawing(state, state.wordChoices[0], now);
+        return;
+      }
       // no word picked in time = turn forfeited. Auto-picking just produced a
       // dead round where nobody drew anything.
       //
@@ -366,6 +427,13 @@ export function advance(state: RoomState, now: number): void {
       return;
     }
     case "drawing": {
+      if (isDrawathon(state)) {
+        // the picker leaving changes nothing: their word is everyone's now
+        if (now + ADVANCE_GRACE_MS < state.phaseEndsAt && !everyoneDone(state))
+          return;
+        endTurn(state, now, false);
+        return;
+      }
       const drawerGone = !state.players.find(
         (p) => p.id === state.drawerId && p.connected
       );
@@ -384,6 +452,10 @@ export function advance(state: RoomState, now: number): void {
 }
 
 function nextTurn(state: RoomState, now: number): void {
+  if (isDrawathon(state)) {
+    nextDrawathonRound(state, now);
+    return;
+  }
   const connected = state.players.filter((p) => p.connected);
   if (connected.length < 2) {
     // Don't tear the game down because people dropped — hold it open and let
@@ -419,6 +491,37 @@ function nextTurn(state: RoomState, now: number): void {
   }
   // nobody drawable right now — hold, don't end
   state.phase = "reveal";
+  state.phaseEndsAt = now + 25_000;
+}
+
+/**
+ * One drawing per round, so every round is a single "turn" — the picker's job
+ * just moves one seat round the table each time.
+ */
+function nextDrawathonRound(state: RoomState, now: number): void {
+  const round = state.round + 1;
+  if (round > state.settings.rounds) {
+    state.phase = "gameover";
+    state.drawerId = null;
+    state.giverId = null;
+    state.word = null;
+    state.phaseEndsAt = 0;
+    return;
+  }
+  const n = state.order.length;
+  for (let hop = 1; hop <= n; hop++) {
+    const idx = (state.turnIndex + hop) % n;
+    const p = state.players.find((x) => x.id === state.order[idx]);
+    if (p?.connected) {
+      state.round = round;
+      state.turnIndex = idx;
+      beginChoosing(state, now);
+      return;
+    }
+  }
+  // everybody has wandered off — hold, don't end
+  state.phase = "reveal";
+  state.drawerId = null;
   state.phaseEndsAt = now + 25_000;
 }
 
@@ -512,6 +615,13 @@ export function kickPlayer(state: RoomState, targetId: string, now: number): voi
   if (state.giverId === targetId)
     state.giverId =
       state.phase === "choosing" ? giverFor(state, state.drawerId ?? "") : null;
+  if (isDrawathon(state)) {
+    if (wasDrawer && state.phase === "choosing" && state.wordChoices.length)
+      beginDrawing(state, state.wordChoices[0], now);
+    else if (state.phase === "drawing" && everyoneDone(state))
+      endTurn(state, now, false);
+    return;
+  }
   if (wasDrawer && (state.phase === "choosing" || state.phase === "drawing")) {
     if (state.phase === "choosing") state.word = null;
     endTurn(state, now, Object.keys(state.guessed).length === 0);
@@ -670,15 +780,18 @@ export function sanitize(
     waiting:
       state.phase !== "lobby" &&
       state.phase !== "gameover" &&
-      state.players.filter((p) => p.connected).length < 2,
+      state.players.filter((p) => p.connected).length <
+        (isDrawathon(state) ? 1 : 2),
     lastTurn:
       state.phase === "reveal" || state.phase === "gameover"
         ? state.lastTurn
         : null,
     // the giver has known the word since they set it, so hiding it from them
     // would only mean they cannot follow their own turn
+    // a draw-a-thon's word is public, so even the broadcast carries it
     yourWord:
-      (isDrawer || isGiver || hasGuessed) && state.phase === "drawing"
+      (isDrawer || isGiver || hasGuessed || isDrawathon(state)) &&
+      state.phase === "drawing"
         ? state.word
         : undefined,
     // in giver mode the shortlist belongs to the giver, and the drawer must

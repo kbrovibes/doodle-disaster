@@ -12,7 +12,7 @@ import {
   saveName,
   savePlayerId,
 } from "@/lib/client";
-import { ClientState } from "@/lib/types";
+import { ClientState, GameMode } from "@/lib/types";
 import { IconLogo, IconRocket, Wordmark } from "@/components/icons";
 import AvatarPicker from "@/components/AvatarPicker";
 import InstallTip from "@/components/InstallTip";
@@ -29,6 +29,7 @@ export default function Home() {
   const [joinCode, setJoinCode] = useState("");
   const [avatar, setAvatar] = useState("a0");
   const [tab, setTab] = useState<"join" | "new" | "party">("join");
+  const [mode, setMode] = useState<GameMode>("classic");
 
   useEffect(() => {
     setName(getSavedName());
@@ -50,6 +51,7 @@ export default function Home() {
         {
           name: n,
           avatar,
+          mode,
           seedSalt: ring?.salt,
           seedCursor: ring?.cursor,
         }
@@ -126,6 +128,30 @@ export default function Home() {
 
         {tab === "new" && (
           <form onSubmit={create} className="mt-4">
+            <div className="mb-4 grid grid-cols-2 gap-1.5">
+              {(
+                [
+                  { key: "classic", label: "Draw & guess", sub: "the classic, 2+ players", emoji: "🕵️" },
+                  { key: "drawathon", label: "Draw-a-thon", sub: "everyone draws · solo OK", emoji: "🖍️" },
+                ] as const
+              ).map((o) => (
+                <button
+                  key={o.key}
+                  type="button"
+                  onClick={() => setMode(o.key)}
+                  className={`rounded-xl border-2 px-2 py-2 text-center transition-all ${
+                    mode === o.key
+                      ? "border-ink bg-sun shadow-doodle"
+                      : "border-ink/15 bg-paper hover:border-ink/40"
+                  }`}
+                >
+                  <span className="block font-display font-bold leading-tight">
+                    {o.emoji} {o.label}
+                  </span>
+                  <span className="block text-[11px] text-ink/50">{o.sub}</span>
+                </button>
+              ))}
+            </div>
             <div className="mb-3 flex justify-center">
               <AvatarPicker
                 value={avatar}
@@ -149,13 +175,17 @@ export default function Home() {
             >
               {busy ? (
                 "Inventing a room…"
+              ) : mode === "drawathon" ? (
+                <>Start a draw-a-thon <IconRocket size={20} /></>
               ) : (
                 <>Create a game <IconRocket size={20} /></>
               )}
             </button>
             {error && <p className="mt-2 text-sm text-coral">{error}</p>}
             <p className="mt-3 text-center text-xs text-ink/50">
-              You&apos;ll get a four-letter code to read out to your friends.
+              {mode === "drawathon"
+                ? "Everyone draws the same thing each round, then you look at them all at the end. Friends can join with the code, or play on your own."
+                : "You’ll get a four-letter code to read out to your friends."}
             </p>
           </form>
         )}
@@ -211,6 +241,13 @@ export default function Home() {
       </div>
 
       <MyGames />
+
+      <Link
+        href="/gallery"
+        className="mt-4 inline-flex items-center gap-1.5 self-center rounded-xl border-2 border-dashed border-ink/25 px-3 py-1.5 text-xs font-bold text-ink/55 transition-colors hover:border-ink hover:text-ink"
+      >
+        🖼️ Browse every drawing ever made
+      </Link>
 
       <InstallTip />
 

@@ -24,6 +24,25 @@ export function roomChannel(roomId: string, playerId: string): RealtimeChannel {
   });
 }
 
+/**
+ * Side channel for people still on the join screen. Separate from the room
+ * channel on purpose: supabase-js hands back an existing channel for a topic
+ * it already knows, and the join screen's channel is still closing when the
+ * room's own one opens.
+ */
+export function joiningChannel(roomId: string, key: string): RealtimeChannel {
+  return supabase().channel(`joining:${roomId}`, {
+    config: { presence: { key } },
+  });
+}
+
+export interface Joiner {
+  key: string;
+  joining: true;
+  name: string;
+  avatar: string;
+}
+
 export async function api<T = { state: ClientState }>(
   path: string,
   body?: unknown
