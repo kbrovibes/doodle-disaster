@@ -28,7 +28,8 @@ export interface CanvasHandle {
   getOps: () => Op[];
   snapshot: () => string; // dataURL
   snapshotSmall: () => string; // downscaled jpeg for bot vision
-  snapshotKeep: () => string; // gallery-quality jpeg, for the archive
+  snapshotKeep: () => string; // mid-size jpeg, for the end-of-game gallery
+  snapshotFull: () => string; // the board at full resolution, for the archive
   inkFraction: () => number; // 0..1 how much of the board has marks on it
   reset: () => void;
 }
@@ -276,6 +277,13 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
         if (url.length < 190_000) return url;
       }
       return jpeg(buf(), 320, 240, 0.6);
+    },
+    snapshotFull: () => {
+      // a doodle is flat colour on white, which PNG keeps crisp and small;
+      // a board flooded with fills can get big, so fall back to a sharp jpeg
+      const png = buf().toDataURL("image/png");
+      if (png.length < 1_400_000) return png;
+      return jpeg(buf(), VW, VH, 0.9);
     },
     reset() {
       opsRef.current = [];

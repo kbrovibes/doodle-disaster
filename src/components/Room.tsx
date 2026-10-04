@@ -875,7 +875,12 @@ export default function Room({ roomId }: { roomId: string }) {
       if (lt && !lt.skipped && snap) {
         const keep = canvasRef.current?.snapshotKeep();
         if (keep)
-          api(`/${roomId}`, { type: "shot", playerId, image: keep }).catch(
+          api(`/${roomId}`, {
+            type: "shot",
+            playerId,
+            image: keep,
+            hires: canvasRef.current?.snapshotFull(),
+          }).catch(
             () => {}
           );
         const meNow = state.players.find((p) => p.id === playerId);
@@ -902,7 +907,12 @@ export default function Room({ roomId }: { roomId: string }) {
       if (iUpload) {
         const keep = canvasRef.current?.snapshotKeep();
         if (keep)
-          api(`/${roomId}`, { type: "shot", playerId, image: keep }).catch(
+          api(`/${roomId}`, {
+            type: "shot",
+            playerId,
+            image: keep,
+            hires: canvasRef.current?.snapshotFull(),
+          }).catch(
             () => {}
           );
       }

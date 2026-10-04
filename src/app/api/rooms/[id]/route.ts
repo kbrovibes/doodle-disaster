@@ -302,6 +302,14 @@ export async function POST(req: NextRequest, { params }: Params) {
           return NextResponse.json({ ok: false });
         if (!image.startsWith("data:image/") || image.length > 200_000)
           return NextResponse.json({ ok: false });
+        // the full-resolution board, kept only for the archive; a bad or
+        // oversized one is dropped rather than failing the shot
+        const rawHires = String(body.hires ?? "");
+        const hires =
+          /^data:image\/(png|jpeg);base64,/.test(rawHires) &&
+          rawHires.length < 1_500_000
+            ? rawHires
+            : null;
         // a draw-a-thon has one drawing per player per round, so each seat
         // gets its own slot; the classic game has one per turn
         const drawathon = isDrawathon(s);
@@ -323,6 +331,7 @@ export async function POST(req: NextRequest, { params }: Params) {
             word: s.lastTurn.word,
             drawer_id: drawathon ? playerId : s.lastTurn.drawerId,
             image,
+            hires,
             archived_at: null,
           },
           { onConflict: "room_id,turn" }

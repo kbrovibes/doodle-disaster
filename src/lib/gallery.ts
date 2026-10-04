@@ -43,7 +43,7 @@ export async function archiveShots({
 }> {
   let q = db
     .from("doodle_shots")
-    .select("room_id, turn, word, drawer_id, image, created_at")
+    .select("room_id, turn, word, drawer_id, image, hires, created_at")
     .is("archived_at", null)
     .order("created_at", { ascending: true })
     .limit(limit);
@@ -68,7 +68,9 @@ export async function archiveShots({
       const room = s.room_id as string;
       const turn = s.turn as number;
       const drawnAt = new Date(s.created_at as string);
-      const m = /^data:(image\/(?:jpeg|png));base64,(.+)$/.exec(s.image as string);
+      // prefer the full-resolution board; older shots only have the small one
+      const src = (s.hires as string | null) || (s.image as string);
+      const m = /^data:(image\/(?:jpeg|png));base64,(.+)$/.exec(src);
       if (!m) {
         // nothing usable to keep; mark it so the job stops tripping over it
         await markArchived(room, turn);
@@ -103,6 +105,7 @@ export async function archiveShots({
         theme: state?.customWords?.theme ?? state?.settings.themePacks?.join(",") ?? null,
         path,
         bytes: bytes.length,
+        ...imageSize(mime, bytes),
         drawn_at: drawnAt.toISOString(),
       };
       const ins = await db
@@ -118,6 +121,28 @@ export async function archiveShots({
     }
   }
   return { archived, failed, remaining: shots.length === limit };
+}
+
+/** width/height straight from the PNG or JPEG header */
+function imageSize(
+  mime: string,
+  b: Buffer
+): { width: number | null; height: number | null } {
+  try {
+    if (mime === "image/png" && b.length > 24)
+      return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
+    // walk JPEG segments to the start-of-frame marker
+    let i = 2;
+    while (i + 9 < b.length) {
+      if (b[i] !== 0xff) break;
+      const marker = b[i + 1];
+      const len = b.readUInt16BE(i + 2);
+      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker))
+        return { width: b.readUInt16BE(i + 7), height: b.readUInt16BE(i + 5) };
+      i += 2 + len;
+    }
+  } catch {}
+  return { width: null, height: null };
 }
 
 async function markArchived(roomId: string, turn: number) {
