@@ -7,7 +7,11 @@ const PAGE = 40;
 /**
  * The archive, newest first, filtered and paged.
  *   ?offset=&player=&difficulty=&mode=&room=&from=YYYY-MM-DD&to=YYYY-MM-DD&q=word
+ *   &fav=1 — hearted only
  *   ?facets=1 — the player / difficulty / mode lists the filter bar offers
+ *
+ * POST { id, favorite } hearts or un-hearts one drawing. Hearts are shared —
+ * there are no accounts — and a hearted drawing keeps full resolution.
  *
  * When GALLERY_KEY is set, callers must send it as `x-gallery-key`.
  */
@@ -24,7 +28,7 @@ export async function GET(req: NextRequest) {
     let q = db
       .from("doodle_gallery")
       .select(
-        "id, room_id, turn, round, word, drawer_id, drawer_name, drawer_avatar, difficulty, mode, theme, path, drawn_at",
+        "id, room_id, turn, round, word, drawer_id, drawer_name, drawer_avatar, difficulty, mode, theme, path, drawn_at, favorite, res",
         { count: "exact" }
       )
       .order("drawn_at", { ascending: false })
@@ -36,6 +40,7 @@ export async function GET(req: NextRequest) {
     else if (player) q = q.ilike("drawer_name", escapeLike(player));
     const difficulty = sp.get("difficulty");
     if (difficulty) q = q.eq("difficulty", difficulty);
+    if (sp.get("fav")) q = q.eq("favorite", true);
     const room = sp.get("room");
     if (room) q = q.eq("room_id", room.toLowerCase());
     const mode = sp.get("mode");
@@ -62,6 +67,8 @@ export async function GET(req: NextRequest) {
       roomId: r.room_id,
       round: r.round,
       drawnAt: r.drawn_at,
+      favorite: r.favorite,
+      res: r.res,
     }));
     return NextResponse.json({
       items,
@@ -76,7 +83,7 @@ export async function GET(req: NextRequest) {
 async function facets() {
   const { data, error } = await db
     .from("doodle_gallery")
-    .select("drawer_name, drawer_avatar, difficulty, mode, drawn_at")
+    .select("drawer_name, drawer_avatar, difficulty, mode, drawn_at, favorite")
     .order("drawn_at", { ascending: false })
     .limit(20000);
   if (error) throw new Error(error.message);
@@ -84,7 +91,9 @@ async function facets() {
   const difficulties: Record<string, number> = {};
   const modes: Record<string, number> = {};
   let unknown = 0;
+  let favorites = 0;
   for (const r of data ?? []) {
+    if (r.favorite) favorites++;
     const name = (r.drawer_name as string | null)?.trim();
     if (name) {
       // the same person across games, however they capitalised it that night
@@ -102,6 +111,7 @@ async function facets() {
     total: data?.length ?? 0,
     players: [...players.values()].sort((a, b) => b.count - a.count),
     unknownPlayers: unknown,
+    favorites,
     difficulties,
     modes,
     oldest: data?.length ? data[data.length - 1].drawn_at : null,
@@ -117,4 +127,31 @@ function dayStart(v: string | null, tzOffsetMin: number): Date | null {
   if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
   const d = new Date(`${v}T00:00:00Z`);
   return new Date(d.getTime() + tzOffsetMin * 60_000);
+}
+
+export async function POST(req: NextRequest) {
+  const key = process.env.GALLERY_KEY;
+  if (key && req.headers.get("x-gallery-key") !== key)
+    return NextResponse.json({ error: "locked" }, { status: 401 });
+  let body: { id?: unknown; favorite?: unknown };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+  const id = String(body.id ?? "");
+  if (!/^[0-9a-f-]{36}$/i.test(id) || typeof body.favorite !== "boolean")
+    return NextResponse.json({ error: "Pass { id, favorite: boolean }" }, { status: 400 });
+  const { data, error } = await db
+    .from("doodle_gallery")
+    .update({
+      favorite: body.favorite,
+      favorited_at: body.favorite ? new Date().toISOString() : null,
+    })
+    .eq("id", id)
+    .select("id, favorite, res")
+    .maybeSingle();
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!data) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  return NextResponse.json(data);
 }

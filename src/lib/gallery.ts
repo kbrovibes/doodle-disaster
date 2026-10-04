@@ -1,7 +1,11 @@
+import sharp from "sharp";
 import { db } from "./server";
 import { RoomState } from "./types";
 
 export const GALLERY_BUCKET = "doodles";
+/** un-hearted drawings older than this are shrunk to medium */
+export const FULL_RES_DAYS = 30;
+const MEDIUM = { width: 640, height: 480, quality: 82 };
 
 export interface GalleryRow {
   id: string;
@@ -17,6 +21,8 @@ export interface GalleryRow {
   theme: string | null;
   path: string;
   drawn_at: string;
+  favorite: boolean;
+  res: "full" | "medium" | "legacy";
 }
 
 export function publicUrl(path: string): string {
@@ -89,6 +95,7 @@ export async function archiveShots({
         .upload(path, bytes, { contentType: mime, upsert: true, cacheControl: "31536000" });
       if (up.error) throw new Error(up.error.message);
 
+      const size = imageSize(mime, bytes);
       const state = stateOf.get(room);
       const drawer = state?.players.find((p) => p.id === s.drawer_id);
       const row = {
@@ -105,7 +112,8 @@ export async function archiveShots({
         theme: state?.customWords?.theme ?? state?.settings.themePacks?.join(",") ?? null,
         path,
         bytes: bytes.length,
-        ...imageSize(mime, bytes),
+        ...size,
+        res: (size.width ?? 0) >= 1000 ? "full" : "legacy",
         drawn_at: drawnAt.toISOString(),
       };
       const ins = await db
@@ -121,6 +129,83 @@ export async function archiveShots({
     }
   }
   return { archived, failed, remaining: shots.length === limit };
+}
+
+/**
+ * Storage diet: a full-resolution drawing nobody has hearted is shrunk to a
+ * medium JPEG once it is FULL_RES_DAYS old. Hearted ones are never touched.
+ *
+ * The medium copy goes to a new path (the old URL is cached for a year, so
+ * overwriting it in place would keep serving the big one), the row is only
+ * switched over if it is STILL un-hearted at that moment, and the full file is
+ * deleted last — so a heart landing mid-way simply wins.
+ */
+export async function downgradeOld({ limit = 25 } = {}): Promise<{
+  downgraded: number;
+  failed: number;
+  remaining: boolean;
+}> {
+  const cutoff = new Date(Date.now() - FULL_RES_DAYS * 86400_000).toISOString();
+  const { data: rows, error } = await db
+    .from("doodle_gallery")
+    .select("id, path")
+    .eq("res", "full")
+    .eq("favorite", false)
+    .lt("drawn_at", cutoff)
+    .order("drawn_at", { ascending: true })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  if (!rows?.length) return { downgraded: 0, failed: 0, remaining: false };
+
+  let downgraded = 0;
+  let failed = 0;
+  for (const r of rows) {
+    const oldPath = r.path as string;
+    const newPath = oldPath.replace(/\.(png|jpe?g)$/i, "") + "-m.jpg";
+    try {
+      const dl = await db.storage.from(GALLERY_BUCKET).download(oldPath);
+      if (dl.error) throw new Error(dl.error.message);
+      const out = await sharp(Buffer.from(await dl.data.arrayBuffer()))
+        .flatten({ background: "#ffffff" })
+        .resize(MEDIUM.width, MEDIUM.height, { fit: "inside" })
+        .jpeg({ quality: MEDIUM.quality, mozjpeg: true })
+        .toBuffer({ resolveWithObject: true });
+
+      const up = await db.storage.from(GALLERY_BUCKET).upload(newPath, out.data, {
+        contentType: "image/jpeg",
+        upsert: true,
+        cacheControl: "31536000",
+      });
+      if (up.error) throw new Error(up.error.message);
+
+      const sw = await db
+        .from("doodle_gallery")
+        .update({
+          path: newPath,
+          res: "medium",
+          bytes: out.data.length,
+          width: out.info.width,
+          height: out.info.height,
+          downgraded_at: new Date().toISOString(),
+        })
+        .eq("id", r.id)
+        .eq("favorite", false)
+        .eq("res", "full")
+        .select("id");
+      if (sw.error) throw new Error(sw.error.message);
+      if (!sw.data?.length) {
+        // hearted while we worked: keep the full one, drop the copy
+        await db.storage.from(GALLERY_BUCKET).remove([newPath]);
+        continue;
+      }
+      await db.storage.from(GALLERY_BUCKET).remove([oldPath]);
+      downgraded++;
+    } catch (e) {
+      failed++;
+      console.error("downgrade failed", r.id, (e as Error).message);
+    }
+  }
+  return { downgraded, failed, remaining: rows.length === limit };
 }
 
 /** width/height straight from the PNG or JPEG header */

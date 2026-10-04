@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { archiveShots } from "@/lib/gallery";
+import { archiveShots, downgradeOld } from "@/lib/gallery";
 
 export const maxDuration = 60;
 
 /**
  * The nightly sweep (see vercel.json) and the backfill: archives every shot
- * the after() hooks missed. Loops in batches until the queue is empty or the
+ * the after() hooks missed, then shrinks un-hearted drawings past their
+ * full-resolution window (see downgradeOld). Loops in batches until the queue is empty or the
  * time budget is nearly spent; the next run picks up anything left.
  *
  * Vercel Cron sends `Authorization: Bearer $CRON_SECRET` when that env var is
@@ -21,14 +22,22 @@ export async function GET(req: NextRequest) {
   let failed = 0;
   let remaining = true;
   try {
-    while (remaining && Date.now() - started < 45_000) {
+    while (remaining && Date.now() - started < 30_000) {
       const r = await archiveShots({ limit: 50 });
       archived += r.archived;
       failed += r.failed;
       // a batch that only failed would loop on the same rows forever
       remaining = r.remaining && r.archived > 0;
     }
-    return NextResponse.json({ archived, failed, remaining });
+    let downgraded = 0;
+    let more = true;
+    while (more && Date.now() - started < 40_000) {
+      const r = await downgradeOld({ limit: 10 });
+      downgraded += r.downgraded;
+      failed += r.failed;
+      more = r.remaining && r.downgraded > 0;
+    }
+    return NextResponse.json({ archived, downgraded, failed, remaining: remaining || more });
   } catch (e) {
     return NextResponse.json(
       { error: (e as Error).message, archived, failed },

@@ -18,12 +18,15 @@ interface Item {
   roomId: string;
   round: number | null;
   drawnAt: string;
+  favorite: boolean;
+  res: "full" | "medium" | "legacy";
 }
 
 interface Facets {
   total: number;
   players: { name: string; avatar: string | null; count: number }[];
   unknownPlayers: number;
+  favorites: number;
   difficulties: Record<string, number>;
   modes: Record<string, number>;
   oldest: string | null;
@@ -41,7 +44,7 @@ const MODES = [
   { key: "drawathon", label: "Draw-a-thon" },
 ] as const;
 
-const FILTER_KEYS = ["q", "player", "difficulty", "mode", "from", "to", "room"] as const;
+const FILTER_KEYS = ["q", "player", "difficulty", "mode", "from", "to", "room", "fav"] as const;
 type Filters = Partial<Record<(typeof FILTER_KEYS)[number], string>>;
 
 const KEY_STORE = "dd_gallery_key";
@@ -177,6 +180,31 @@ function Gallery() {
   const [open, setOpen] = useState<number | null>(null);
   const activeCount = Object.keys(filters).length;
 
+  /** optimistic: the heart fills at once and rolls back if the save fails */
+  const toggleFavorite = useCallback(
+    async (id: string, favorite: boolean) => {
+      const flip = (fav: boolean) =>
+        setItems((prev) => prev.map((x) => (x.id === id ? { ...x, favorite: fav } : x)));
+      flip(favorite);
+      setFacets((f) => (f ? { ...f, favorites: f.favorites + (favorite ? 1 : -1) } : f));
+      try {
+        const res = await fetch("/api/gallery", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(galleryKey ? { "x-gallery-key": galleryKey } : {}),
+          },
+          body: JSON.stringify({ id, favorite }),
+        });
+        if (!res.ok) throw new Error();
+      } catch {
+        flip(!favorite);
+        setFacets((f) => (f ? { ...f, favorites: f.favorites + (favorite ? -1 : 1) } : f));
+      }
+    },
+    [galleryKey]
+  );
+
   if (locked) {
     return (
       <Unlock
@@ -247,6 +275,7 @@ function Gallery() {
             item={it}
             onOpen={() => setOpen(i)}
             onPlayer={(name) => setFilters({ player: name })}
+            onFavorite={(fav) => toggleFavorite(it.id, fav)}
           />
         ))}
       </div>
@@ -272,6 +301,7 @@ function Gallery() {
             else if (nextOffset !== null && !loading) loadPage(nextOffset, generation.current);
           }}
           onClose={() => setOpen(null)}
+          onFavorite={(fav) => toggleFavorite(items[open].id, fav)}
           onFilter={(patch) => {
             setOpen(null);
             setFilters(patch);
@@ -362,6 +392,15 @@ function FilterBar({
       </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <button
+          className={chip(!!filters.fav)}
+          onClick={() => onChange({ fav: filters.fav ? "" : "1" })}
+          title="Only hearted drawings"
+        >
+          <span className={filters.fav ? "text-coral" : "text-ink/40"}>♥</span> Favorites
+          {facets?.favorites ? <span className="ml-1 text-ink/40">{facets.favorites}</span> : null}
+        </button>
+        <span className="mx-1 h-5 w-px bg-ink/15" />
         <button className={chip(!filters.difficulty)} onClick={() => onChange({ difficulty: "" })}>
           Any level
         </button>
@@ -457,18 +496,60 @@ function when(iso: string) {
   });
 }
 
+function Heart({
+  on,
+  onToggle,
+  className = "",
+}: {
+  on: boolean;
+  onToggle: (next: boolean) => void;
+  className?: string;
+}) {
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle(!on);
+      }}
+      aria-pressed={on}
+      aria-label={on ? "Remove heart" : "Heart this drawing"}
+      title={
+        on
+          ? "Hearted — kept at full resolution forever"
+          : "Heart it to keep it at full resolution forever"
+      }
+      className={`flex h-8 w-8 items-center justify-center rounded-full border-2 text-base leading-none transition-transform active:scale-90 ${
+        on
+          ? "border-coral bg-coral text-white shadow-doodle"
+          : "border-ink/20 bg-white/90 text-ink/40 hover:border-coral hover:text-coral"
+      } ${className}`}
+    >
+      ♥
+    </button>
+  );
+}
+
 function Card({
   item,
   onOpen,
   onPlayer,
+  onFavorite,
 }: {
   item: Item;
   onOpen: () => void;
   onPlayer: (name: string) => void;
+  onFavorite: (next: boolean) => void;
 }) {
   const level = levelLabel(item.difficulty);
   return (
-    <figure className="group mb-3 break-inside-avoid overflow-hidden rounded-2xl border-2 border-ink/15 bg-white transition-all hover:-translate-y-0.5 hover:border-ink hover:shadow-doodle">
+    <figure className="group relative mb-3 break-inside-avoid overflow-hidden rounded-2xl border-2 border-ink/15 bg-white transition-all hover:-translate-y-0.5 hover:border-ink hover:shadow-doodle">
+      <Heart
+        on={item.favorite}
+        onToggle={onFavorite}
+        className={`absolute right-2 top-2 z-10 ${
+          item.favorite ? "" : "opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
+        }`}
+      />
       <button onClick={onOpen} className="block w-full cursor-zoom-in" aria-label={`Open “${item.word}”`}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
@@ -532,6 +613,7 @@ function Lightbox({
   onNext,
   onClose,
   onFilter,
+  onFavorite,
 }: {
   item: Item;
   hasPrev: boolean;
@@ -540,6 +622,7 @@ function Lightbox({
   onNext: () => void;
   onClose: () => void;
   onFilter: (patch: Filters) => void;
+  onFavorite: (next: boolean) => void;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -596,8 +679,10 @@ function Lightbox({
                 <span>· {item.mode === "drawathon" ? "Draw-a-thon" : "Draw & guess"}</span>
                 {item.round && <span>· round {item.round}</span>}
                 {item.theme && <span>· theme: {item.theme}</span>}
+                <span>· {resLabel(item)}</span>
               </div>
             </div>
+            <Heart on={item.favorite} onToggle={onFavorite} />
             <button onClick={onClose} className="rounded-lg px-2 py-1 text-xs font-bold text-ink/45 hover:text-ink">
               close
             </button>
@@ -636,6 +721,16 @@ function Lightbox({
       </div>
     </div>
   );
+}
+
+function resLabel(item: Item) {
+  if (item.res === "legacy") return "small (saved before full-res)";
+  if (item.res === "medium") return "medium res";
+  if (item.favorite) return "full res · kept forever";
+  const left = 30 - Math.floor((Date.now() - new Date(item.drawnAt).getTime()) / 86400_000);
+  return left > 0
+    ? `full res · shrinks in ${left} day${left === 1 ? "" : "s"} unless hearted`
+    : "full res · shrinking soon unless hearted";
 }
 
 function Unlock({ onKey }: { onKey: (k: string) => void }) {
