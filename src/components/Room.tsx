@@ -13,6 +13,7 @@ import InstallTip from "./InstallTip";
 import { recordGame, touchGame } from "@/lib/games";
 import { syncRing } from "@/lib/played";
 import { saveArchive } from "@/lib/archive";
+import { shotRound } from "@/lib/shots";
 import { THEMES, themeWords } from "@/lib/wordbank/themes";
 import { roomCode } from "@/lib/names";
 import { useEdgeSwipeGuard } from "@/lib/edgeguard";
@@ -3282,7 +3283,7 @@ function DrawathonReview({
     >();
     if (shots && shots.length) {
       for (const sh of shots) {
-        const r = Math.floor(sh.turn / 1000);
+        const r = shotRound(sh.turn);
         const p = state.players.find((x) => x.id === sh.drawerId);
         const g = byRound.get(r) ?? { word: sh.word, items: [] };
         g.items.push({

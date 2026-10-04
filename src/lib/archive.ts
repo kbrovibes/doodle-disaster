@@ -15,7 +15,8 @@
  */
 const KEY = "dd_archive";
 const MAX_GAMES = 6;
-const MAX_SHOTS = 24;
+/** per room — a room holds every game played in it that night */
+const MAX_SHOTS = 60;
 const MAX_BYTES = 2_200_000;
 
 export interface ArchivedShot {
@@ -84,10 +85,19 @@ export function hasArchived(roomId: string): boolean {
   return read().some((g) => g.roomId === roomId);
 }
 
+/**
+ * Each "Play again" ends another game in the same room. Shot turns carry the
+ * game number, so merging by turn keeps the whole session rather than letting
+ * the latest game replace the ones before it.
+ */
 export function saveArchive(game: ArchivedGame): void {
+  const before = read().find((g) => g.roomId === game.roomId);
+  const byTurn = new Map<number, ArchivedShot>();
+  for (const sh of before?.shots ?? []) byTurn.set(sh.turn, sh);
+  for (const sh of game.shots) byTurn.set(sh.turn, sh);
   const trimmed: ArchivedGame = {
     ...game,
-    shots: game.shots.slice(0, MAX_SHOTS),
+    shots: [...byTurn.values()].sort((a, b) => a.turn - b.turn).slice(-MAX_SHOTS),
   };
   const rest = read().filter((g) => g.roomId !== game.roomId);
   write([trimmed, ...rest].sort((a, b) => b.endedAt - a.endedAt));

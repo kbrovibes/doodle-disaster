@@ -12,6 +12,7 @@ import {
   kickPlayer,
   markConnected,
   markDone,
+  shotTurn,
   playAgain,
   removeBot,
   renamePlayer,
@@ -323,7 +324,7 @@ export async function POST(req: NextRequest, { params }: Params) {
             (artist?.isBot && s.hostId === playerId);
           if (!mayUpload) return NextResponse.json({ ok: false });
         }
-        const turn = s.round * 1000 + (drawathon ? seat : s.turnIndex);
+        const turn = shotTurn(s, drawathon ? seat : s.turnIndex);
         const { error } = await db.from("doodle_shots").upsert(
           {
             room_id: id,

@@ -2,6 +2,7 @@ import { ClientState, Player, RoomState, Settings } from "./types";
 import { isPlayableTheme, pickWordChoices, randomSalt, type Cursor } from "./words";
 import { pickBotWords } from "./botdraw";
 import { isClose, isCorrect } from "./text";
+export { shotTurn } from "./shots";
 
 export class GameError extends Error {
   status = 400;
@@ -163,6 +164,7 @@ export function startGame(state: RoomState, now: number): void {
     const here = state.players.filter((p) => p.connected);
     if (here.length < 1) throw new GameError("Need at least one player");
     state.players.forEach((p) => (p.score = 0));
+    state.game = (state.game ?? 0) + 1;
     state.order = shuffle(here.map((p) => p.id));
     state.round = 1;
     state.turnIndex = 0;
@@ -175,6 +177,7 @@ export function startGame(state: RoomState, now: number): void {
   if (connected.length < 2) throw new GameError("Need at least 2 players");
   if (humans.length < 1) throw new GameError("Need at least one human");
   state.players.forEach((p) => (p.score = 0));
+  state.game = (state.game ?? 0) + 1;
   // bots take drawing turns too
   state.order = shuffle(connected.map((p) => p.id));
   state.round = 1;
@@ -758,6 +761,7 @@ export function sanitize(
     hostId: state.hostId,
     settings: state.settings,
     round: state.round,
+    game: state.game ?? 0,
     totalRounds: state.settings.rounds,
     turnIndex: state.turnIndex,
     turnsPerRound: state.order.length,

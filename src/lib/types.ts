@@ -45,6 +45,8 @@ export interface RoomState {
   order: string[]; // player ids in draw order for current game
   round: number; // 1-based
   turnIndex: number; // index into order
+  /** how many games this room has started — "Play again" makes a new one */
+  game?: number;
   drawerId: string | null;
   /**
    * The player setting this turn's word, in "giver" mode. Null whenever the
@@ -90,6 +92,7 @@ export interface ClientState {
   hostId: string;
   settings: Settings;
   round: number;
+  game: number;
   totalRounds: number;
   turnIndex: number;
   turnsPerRound: number;

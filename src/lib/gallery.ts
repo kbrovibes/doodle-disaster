@@ -1,6 +1,7 @@
 import sharp from "sharp";
 import { db } from "./server";
 import { RoomState } from "./types";
+import { shotGame, shotRound } from "./shots";
 
 export const GALLERY_BUCKET = "doodles";
 /** un-hearted drawings older than this are shrunk to medium */
@@ -102,7 +103,8 @@ export async function archiveShots({
         source_key: `${room}:${turn}:${stamp}`,
         room_id: room,
         turn,
-        round: Math.floor(turn / 1000) || null,
+        round: shotRound(turn) || null,
+        game: shotGame(turn) || null,
         word: s.word as string,
         drawer_id: (s.drawer_id as string) ?? null,
         drawer_name: drawer?.name ?? null,

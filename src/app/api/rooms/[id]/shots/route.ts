@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { db, RoomError } from "@/lib/server";
+import { db, loadRoom, RoomError } from "@/lib/server";
+import { SHOT_GAME_STRIDE } from "@/lib/shots";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -10,10 +11,16 @@ type Params = { params: Promise<{ id: string }> };
 export async function GET(_req: Request, { params }: Params) {
   const { id } = await params;
   try {
+    // only the game that just ended — earlier games in this room are in the
+    // gallery, and a not-yet-tidied one must not leak into this one's photos
+    const { state } = await loadRoom(id.toLowerCase());
+    const game = state.game ?? 0;
     const { data, error } = await db
       .from("doodle_shots")
       .select("turn, word, drawer_id, image")
       .eq("room_id", id.toLowerCase())
+      .gte("turn", game * SHOT_GAME_STRIDE)
+      .lt("turn", (game + 1) * SHOT_GAME_STRIDE)
       .order("turn", { ascending: true })
       // a draw-a-thon keeps one per player per round
       .limit(120);
